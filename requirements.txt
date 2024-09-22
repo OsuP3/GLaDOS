@@ -1,0 +1,5 @@
+py-cord
+python-dotenv
+asyncio
+yt-dlp
+pyNaCL
