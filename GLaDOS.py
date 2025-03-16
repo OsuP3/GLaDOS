@@ -20,12 +20,13 @@ class PyCordBot(bridge.Bot):
     intents = discord.Intents.all()
     token = os.getenv("DISCORD_API_TOKEN")
     intents.message_content = True
+    last_command_time = time.time()
+
 
 voice_clients = {}
 yt_dl_options = {'format': 'bestaudio/best'}
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 ffmpeg_options = {'options': '-vn'}
-
 
 client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
 
@@ -35,29 +36,46 @@ async def on_ready():
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+     #define channels and roles
      voicechannel = client.get_channel(1286141863622873134)
+     guestchannel = client.get_channel(1287314792817889290)
      genchat = client.get_channel(1286141863622873133)
      callchat = client.get_channel(1286333897109409883)
      logchannel = client.get_channel(1286349969271558204)
      role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
+     guestrole = client.get_guild(1286141863622873130).get_role(1312719677889314816)
+    
      if(before.channel == None or after.channel == None):
         print(f"{member} Went from {before.channel} to {after.channel}  {datetime.datetime.now()} EST")
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
 
-     if before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1:
+     if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1:
+        await genchat.send(f"{member.name} is a dingus")
+
+     elif (before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+        client.last_command_time = time.time()    
         print(f"{member} started a call")
         await callchat.set_permissions(role, read_messages=True)
         await genchat.send(f"{member.name} has started a call")
         await callchat.send(f"@everyone {member.name} has started a call")
         await asyncio.sleep(30)
         await callchat.set_permissions(role, read_messages=False)
-
+     elif (after.channel == guestchannel and guestrole not in member.roles):
+        await logchannel.send(f"VOICE: {member} tried joining guestchannel")
+        await member.move_to(None)
 
 @client.event
 async def on_message(message: discord.Message):
+    role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
+    callchat = client.get_channel(1286333897109409883)
     channel = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(message.channel))
+    generalchannel = client.get_channel(1286141863622873133)
     logchannel = client.get_channel(1286349969271558204)
     datalogchannel = client.get_channel(1286381605148950600)
+    remotechannel = client.get_channel(1287545577206317067)
+
+    if(channel == remotechannel):
+        await generalchannel.send(message.content)
 
     if(message.content.startswith("pls play")):
         try:
@@ -97,10 +115,43 @@ async def on_message(message: discord.Message):
             await channel.send(f"ok")
         except Exception as e:
             print(e)
-
     if(channel != logchannel and channel != datalogchannel):
         await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
+    
+    if(message.content.startswith("pls ring all") and message.author.voice != None):
+        if(((time.time() - client.last_command_time) > 30)):
+            try:
+                client.last_command_time = time.time()
+                await message.delete()
+                await callchat.set_permissions(role, read_messages=True)
+                await callchat.send(f"Somebody rang @everyone")
+                await asyncio.sleep(30)
+                await callchat.set_permissions(role, read_messages=False)
+            except Exception as e:
+                print(e)
+    elif(message.content.startswith("pls ring") and message.author.voice != None):
+        if(((time.time() - client.last_command_time) > 30)):
+            try:
+                guild      = client.get_guild(1286141863622873130)
+                memberName = message.content[9:]
+                member     = None
 
+                for guild_member in guild.members:
+                    if guild_member.display_name == memberName or guild_member.name == memberName:
+                        member = guild_member
+
+                if(member != None and member.voice == None):
+                    client.last_command_time = time.time()
+                    print(f"Ringing {memberName}")
+                    await callchat.set_permissions(member, read_messages=True)
+                    await callchat.send(f"Ringing <@{member.id}>")
+                    await message.delete()
+                    await asyncio.sleep(30)
+                    await callchat.set_permissions(member, read_messages=False)
+            except Exception as e:
+                print(e)
+        else:
+            print("Cooldown")
     if(message.author != client.user and "glados" in str(message.content).lower()):
         await channel.send(get_response(message.content, message.author.name))
 
@@ -150,8 +201,8 @@ for filename in os.listdir("./cogs"):
 
 async def main_bot():
     print("bot is starting")
-    
     await client.start(PyCordBot().token)
+    start_time = time.time()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
