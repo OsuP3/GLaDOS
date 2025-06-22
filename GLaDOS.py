@@ -2,14 +2,12 @@
 import os
 import yt_dlp
 import asyncio
-import ffmpeg
 import random
 import time
 import datetime
 import aiohttp
 import discord
 from responses import get_response
-#from Music import CheckMusicCommands
 
 from discord.ext import bridge
 from dotenv import load_dotenv, dotenv_values
@@ -21,12 +19,6 @@ class PyCordBot(bridge.Bot):
     token = os.getenv("DISCORD_API_TOKEN")
     intents.message_content = True
     last_command_time = time.time()
-
-
-voice_clients = {}
-yt_dl_options = {'format': 'bestaudio/best'}
-ytdl = yt_dlp.YoutubeDL(yt_dl_options)
-ffmpeg_options = {'options': '-vn'}
 
 client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
 
@@ -77,44 +69,6 @@ async def on_message(message: discord.Message):
     if(channel == remotechannel):
         await generalchannel.send(message.content)
 
-    if(message.content.startswith("pls play")):
-        try:
-            voice_client = await message.author.voice.channel.connect()
-            voice_clients[voice_client.guild.id] = voice_client
-            
-        except Exception as e:
-            print(e)
-        try:
-            url = message.content.split()[2]
-
-            loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-
-            song = data['url']
-            player = discord.FFmpegPCMAudio(song, **ffmpeg_options)
-
-            await channel.send(f"ok")
-            voice_clients[message.guild.id].play(player)
-        except Exception as e:
-            print(e)
-    if(message.content.startswith("pls pause")):
-        try:
-            voice_clients[message.guild.id].pause()
-            await channel.send(f"ok")
-        except Exception as e:
-            print(e)
-    if(message.content.startswith("?pls resume")):
-        try:
-            voice_clients[message.guild.id].resume()
-            await channel.send(f"ok")
-        except Exception as e:
-            print(e)
-    if(message.content.startswith("pls stop")):
-        try:
-            voice_clients[message.guild.id].disconnect()
-            await channel.send(f"ok")
-        except Exception as e:
-            print(e)
     if(channel != logchannel and channel != datalogchannel):
         await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
     
@@ -147,7 +101,7 @@ async def on_message(message: discord.Message):
                     await callchat.send(f"Ringing <@{member.id}>")
                     await message.delete()
                     await asyncio.sleep(30)
-                    await callchat.set_permissions(member, read_messages=False)
+                    await callchat.set_permissions(member, read_messages=None)
             except Exception as e:
                 print(e)
         else:
@@ -194,11 +148,6 @@ async def ping(ctx):
     latency = (str(client.latency)).split('.')[1][1:3]
     await ctx.respond(f"Pong!, Bot replied in {latency} ms")
 
-for filename in os.listdir("./cogs"):
-    if filename.endswith(".py"):
-        client.load_extension(f"cogs.{filename[:-3]}")
-        print(f"loaded {filename}")
-
 async def main_bot():
     print("bot is starting")
     await client.start(PyCordBot().token)
@@ -207,7 +156,3 @@ async def main_bot():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(asyncio.gather(main_bot()))
-
-
-
-
