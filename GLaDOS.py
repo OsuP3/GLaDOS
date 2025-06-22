@@ -26,45 +26,71 @@ client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
 async def on_ready():
     print(f'{client.user} is now running')
 
+
+# For keeping track of call time and adding length to original time
+call_begin_time = None
+call_start_message = None
+
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-     #define channels and roles
-     voicechannel = client.get_channel(1286141863622873134)
-     guestchannel = client.get_channel(1287314792817889290)
-     genchat = client.get_channel(1286141863622873133)
-     callchat = client.get_channel(1286333897109409883)
-     logchannel = client.get_channel(1286349969271558204)
-     role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
-     guestrole = client.get_guild(1286141863622873130).get_role(1312719677889314816)
-    
-     if(before.channel == None or after.channel == None):
+    global call_begin_time
+    global call_start_message
+
+    #define channels and roles
+    voicechannel = client.get_channel(1286141863622873134)
+    guestchannel = client.get_channel(1287314792817889290)
+    genchat = client.get_channel(1286141863622873133)
+    callchat = client.get_channel(1286333897109409883)
+    logchannel = client.get_channel(1286349969271558204)
+    role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
+    guestrole = client.get_guild(1286141863622873130).get_role(1312719677889314816)
+
+    if(before.channel == None or after.channel == None):
         print(f"{member} Went from {before.channel} to {after.channel}  {datetime.datetime.now()} EST")
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
 
-     if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1:
+    if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1:
         await genchat.send(f"{member.name} is a dingus")
 
-     elif (before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
-        client.last_command_time = time.time()    
+    if (after.channel == guestchannel and guestrole not in member.roles):
+        await logchannel.send(f"VOICE: {member} tried joining guestchannel")
+        await member.move_to(None)
+    elif (after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+        client.last_command_time = time.time()
+        call_begin_time = client.last_command_time
         print(f"{member} started a call")
         await callchat.set_permissions(role, read_messages=True)
-        await genchat.send(f"{member.name} has started a call")
+        call_start_message = await genchat.send(f"{member.name} has started a call")
         await callchat.send(f"@everyone {member.name} has started a call")
         await asyncio.sleep(30)
         await callchat.set_permissions(role, read_messages=False)
-     elif (after.channel == guestchannel and guestrole not in member.roles):
-        await logchannel.send(f"VOICE: {member} tried joining guestchannel")
-        await member.move_to(None)
-
+    elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time is not None):
+        call_duration = time.time() - call_begin_time
+        if call_duration < 60:
+            call_duration_msg = "a few seconds"
+        elif (call_duration // 60 == 1):
+            call_duration_msg = "a minute"
+        elif (call_duration // 60) < 60:
+            call_duration_msg = f"{int(call_duration//60)} minutes"
+        elif (call_duration // 3600 == 1):
+            call_duration_msg = f"an hour"
+        elif (call_duration // 3600 < 24):
+            call_duration_msg = f"{int(call_duration // 3600)} hours"
+        elif ((call_duration // 3600) == 24):
+            call_duration_msg = f"a day"
+        else:
+            call_duration_msg = f"{int(call_duration // (3600 * 24))} days"
+        await call_start_message.edit(content=f"{call_start_message.content[:-19]} started a call that lasted {call_duration_msg}")
+        call_begin_time = None
 @client.event
 async def on_message(message: discord.Message):
-    role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
-    callchat = client.get_channel(1286333897109409883)
-    channel = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(message.channel))
+    role           = client.get_guild(1286141863622873130).get_role(1286149445750100098)
+    callchat       = client.get_channel(1286333897109409883)
+    channel        = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(message.channel))
     generalchannel = client.get_channel(1286141863622873133)
-    logchannel = client.get_channel(1286349969271558204)
+    logchannel     = client.get_channel(1286349969271558204)
     datalogchannel = client.get_channel(1286381605148950600)
-    remotechannel = client.get_channel(1287545577206317067)
+    remotechannel  = client.get_channel(1287545577206317067)
 
     if(channel == remotechannel):
         await generalchannel.send(message.content)
