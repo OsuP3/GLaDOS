@@ -22,12 +22,36 @@ class PyCordBot(bridge.Bot):
 
 client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
 
+# global channels and roles
+voicechannel   = None
+guestchannel   = None
+genchat        = None
+callchat       = None
+logchannel     = None
+member_role    = None
+guestrole      = None
+datalogchannel = None
+remotechannel  = None
+guild          = None
+
 @client.listen()
 async def on_ready():
     print(f'{client.user} is now running')
 
+    # define channels and roles
+    global guild, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
+    guild          = client.get_guild(int(os.getenv("GUILD_ID")))
+    voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
+    guestchannel   = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
+    genchat        = client.get_channel(int(os.getenv("GENCHAT_ID")))
+    callchat       = client.get_channel(int(os.getenv("CALLCHAT_ID")))
+    logchannel     = client.get_channel(int(os.getenv("LOGCHANNEL_ID")))
+    member_role    = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
+    guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
+    datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
+    remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
 
-# For keeping track of call time and adding length to original time
+# For keeping track of call time and adding length to original message
 call_begin_time = None
 call_start_message = None
 
@@ -36,16 +60,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     global call_begin_time
     global call_start_message
 
-    #define channels and roles
-    voicechannel = client.get_channel(1286141863622873134)
-    guestchannel = client.get_channel(1287314792817889290)
-    genchat = client.get_channel(1286141863622873133)
-    callchat = client.get_channel(1286333897109409883)
-    logchannel = client.get_channel(1286349969271558204)
-    role = client.get_guild(1286141863622873130).get_role(1286149445750100098)
-    guestrole = client.get_guild(1286141863622873130).get_role(1312719677889314816)
-
-    if(before.channel == None or after.channel == None):
+    if(before.channel != after.channel):
         print(f"{member} Went from {before.channel} to {after.channel}  {datetime.datetime.now()} EST")
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
 
@@ -55,15 +70,17 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if (after.channel == guestchannel and guestrole not in member.roles):
         await logchannel.send(f"VOICE: {member} tried joining guestchannel")
         await member.move_to(None)
-    elif (after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+
+    elif (before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
         client.last_command_time = time.time()
         call_begin_time = client.last_command_time
         print(f"{member} started a call")
-        await callchat.set_permissions(role, read_messages=True)
+        await callchat.set_permissions(member_role, read_messages=True)
         call_start_message = await genchat.send(f"{member.name} has started a call")
         await callchat.send(f"@everyone {member.name} has started a call")
         await asyncio.sleep(30)
-        await callchat.set_permissions(role, read_messages=False)
+        await callchat.set_permissions(member_role, read_messages=False)
+
     elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time is not None):
         call_duration = time.time() - call_begin_time
         if call_duration < 60:
@@ -82,18 +99,14 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             call_duration_msg = f"{int(call_duration // (3600 * 24))} days"
         await call_start_message.edit(content=f"{call_start_message.content[:-19]} started a call that lasted {call_duration_msg}")
         call_begin_time = None
+
 @client.event
 async def on_message(message: discord.Message):
-    role           = client.get_guild(1286141863622873130).get_role(1286149445750100098)
-    callchat       = client.get_channel(1286333897109409883)
-    channel        = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(message.channel))
-    generalchannel = client.get_channel(1286141863622873133)
-    logchannel     = client.get_channel(1286349969271558204)
-    datalogchannel = client.get_channel(1286381605148950600)
-    remotechannel  = client.get_channel(1287545577206317067)
+    # Channel messge was sent from
+    channel = discord.utils.get(guild.text_channels, name=str(message.channel))
 
     if(channel == remotechannel):
-        await generalchannel.send(message.content)
+        await genchat.send(message.content)
 
     if(channel != logchannel and channel != datalogchannel):
         await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
@@ -103,16 +116,15 @@ async def on_message(message: discord.Message):
             try:
                 client.last_command_time = time.time()
                 await message.delete()
-                await callchat.set_permissions(role, read_messages=True)
+                await callchat.set_permissions(member_role, read_messages=True)
                 await callchat.send(f"Somebody rang @everyone")
                 await asyncio.sleep(30)
-                await callchat.set_permissions(role, read_messages=False)
+                await callchat.set_permissions(member_role, read_messages=False)
             except Exception as e:
                 print(e)
     elif(message.content.startswith("pls ring") and message.author.voice != None):
         if(((time.time() - client.last_command_time) > 30)):
             try:
-                guild      = client.get_guild(1286141863622873130)
                 memberName = message.content[9:]
                 member     = None
 
@@ -137,23 +149,20 @@ async def on_message(message: discord.Message):
 
 @client.event
 async def on_message_edit(before:discord.message, after:discord.message):
-    channel = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(before.channel))
-    logchannel = client.get_channel(1286349969271558204)
+    channel = discord.utils.get(guild.text_channels, name=str(before.channel))
+
     if(channel != logchannel):
         await logchannel.send(f"EDIT: {str(channel).title()}/{before.author}: original: ( {before.content} ) - > edited: ( {after.content} )")
-
 @client.event
 async def on_message_delete(message: discord.Message):
-    channel = discord.utils.get(client.get_guild(1286141863622873130).text_channels, name=str(message.channel))
-    logchannel = client.get_channel(1286349969271558204)
+    channel = discord.utils.get(guild.text_channels, name=str(message.channel))
+
     if(channel != logchannel):
         await logchannel.send(f"DELETED: {str(channel).title()}/{message.author}: {message.content}")
-
 @client.event
 async def on_raw_message_delete(data: discord.RawMessageDeleteEvent):
     channel = client.get_channel(data.channel_id)
-    logchannel = client.get_channel(1286349969271558204)
-    datalogchannel = client.get_channel(1286381605148950600)
+
     if(data.cached_message == None):
         await logchannel.send(f"UNCACHED DELETED (check data) / ID = {data.message_id}")
     if(channel != logchannel and channel != datalogchannel): 
@@ -161,8 +170,7 @@ async def on_raw_message_delete(data: discord.RawMessageDeleteEvent):
 @client.event
 async def on_raw_message_edit(data: discord.RawMessageUpdateEvent):
     channel = client.get_channel(data.channel_id)
-    logchannel = client.get_channel(1286349969271558204)
-    datalogchannel = client.get_channel(1286381605148950600)
+
     if(data.cached_message ==None):
         await logchannel.send(f"UNCACHED EDIT (check data) / ID = {data.message_id}") 
 
