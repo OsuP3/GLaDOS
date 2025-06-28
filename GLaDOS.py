@@ -102,8 +102,8 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 @client.event
 async def on_message(message: discord.Message):
-    # Channel messge was sent from
-    channel = discord.utils.get(guild.text_channels, name=str(message.channel))
+    # Channel message was sent from 
+    channel = message.channel
 
     if(channel == remotechannel):
         await genchat.send(message.content)
