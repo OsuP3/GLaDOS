@@ -129,13 +129,14 @@ async def on_message(message: discord.Message):
                         global call_begin_time, call_start_message
                         call_start_message = await genchat.fetch_message(int(message_split[3]))
                         call_begin_time = call_start_message.created_at.timestamp()
-                        await debugchannel.send(f"Call start time set, (timestamp: {call_begin_time})")
+                        await debugchannel.send(f"Call start time set. (timestamp: {call_begin_time})")
                     elif message_split[2] == "perms":
                         pass
                     elif  message_split[2] == "limit":
                         pass
             elif message == "reset cooldown":
                 client.last_command_time = 0
+                await debugchannel.send(f"Cooldown reset.")
         except Exception as e:
             print("Exception:", e)
 
