@@ -126,12 +126,10 @@ async def on_message(message: discord.Message):
             if message_split[0] == "set":
                 if message_split[1] == "call":
                     if message_split[2] == "start":
-                        global call_begin_time
-                        hour = message_split[3]
-                        day = message_split[4]
-                        dt = datetime.strptime(f"{day} {hour}", "%m-%d-%Y %H:%M")
-                        call_begin_time = dt.timestamp()
-                        await debugchannel.send(f"Call start time set to {dt} (timestamp: {call_begin_time})")
+                        global call_begin_time, call_start_message
+                        call_start_message = await genchat.fetch_message(int(message_split[3]))
+                        call_begin_time = call_start_message.created_at.timestamp()
+                        await debugchannel.send(f"Call start time set, (timestamp: {call_begin_time})")
                     elif message_split[2] == "perms":
                         pass
                     elif  message_split[2] == "limit":
@@ -141,6 +139,8 @@ async def on_message(message: discord.Message):
         except Exception as e:
             print("Exception:", e)
 
+    elif(message.author != client.user and "glados" in str(message.content).lower()):
+        await channel.send(get_response(message.content, message.author.name))
     elif(message.content.startswith("pls ring all") and message.author.voice != None):
         if(((time.time() - client.last_command_time) > 30)):
             try:
@@ -174,8 +174,6 @@ async def on_message(message: discord.Message):
                 print(e)
         else:
             print("Cooldown")
-    if(message.author != client.user and "glados" in str(message.content).lower()):
-        await channel.send(get_response(message.content, message.author.name))
 
 @client.event
 async def on_message_edit(before:discord.message, after:discord.message):
