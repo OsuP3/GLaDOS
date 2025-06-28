@@ -1,10 +1,9 @@
-#needs ffmpeg
 import os
 import yt_dlp
 import asyncio
 import random
 import time
-import datetime
+from datetime import datetime
 import aiohttp
 import discord
 from responses import get_response
@@ -24,6 +23,7 @@ client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
 
 # global channels and roles
 voicechannel   = None
+debugchannel   = None
 guestchannel   = None
 genchat        = None
 callchat       = None
@@ -34,13 +34,21 @@ datalogchannel = None
 remotechannel  = None
 guild          = None
 
+# For keeping track of call time and adding length to original message
+call_begin_time    = None
+call_start_message = None
+
+# For debug modifications
+guild_items = {}
+
 @client.listen()
 async def on_ready():
     print(f'{client.user} is now running')
 
     # define channels and roles
-    global guild, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
+    global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
     guild          = client.get_guild(int(os.getenv("GUILD_ID")))
+    debugchannel   = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
     voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
     guestchannel   = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
     genchat        = client.get_channel(int(os.getenv("GENCHAT_ID")))
@@ -50,10 +58,10 @@ async def on_ready():
     guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
     datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
     remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
-
-# For keeping track of call time and adding length to original message
-call_begin_time = None
-call_start_message = None
+    
+    # For debug modifications
+    global guild_items
+    guild_items = {}
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -61,7 +69,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     global call_start_message
 
     if(before.channel != after.channel):
-        print(f"{member} Went from {before.channel} to {after.channel}  {datetime.datetime.now()} EST")
+        print(f"{member} Went from {before.channel} to {after.channel}  {datetime.now()} EST")
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
 
     if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1:
@@ -111,7 +119,29 @@ async def on_message(message: discord.Message):
     if(channel != logchannel and channel != datalogchannel):
         await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
     
-    if(message.content.startswith("pls ring all") and message.author.voice != None):
+    if channel == debugchannel:
+        message = message.content.lower()
+        message_split = message.split(" ")
+        try:
+            if message_split[0] == "set":
+                if message_split[1] == "call":
+                    if message_split[2] == "start":
+                        global call_begin_time
+                        hour = message_split[3]
+                        day = message_split[4]
+                        dt = datetime.strptime(f"{day} {hour}", "%m-%d-%Y %H:%M")
+                        call_begin_time = dt.timestamp()
+                        await debugchannel.send(f"Call start time set to {dt} (timestamp: {call_begin_time})")
+                    elif message_split[2] == "perms":
+                        pass
+                    elif  message_split[2] == "limit":
+                        pass
+            elif message == "reset cooldown":
+                client.last_command_time = 0
+        except Exception as e:
+            print("Exception:", e)
+
+    elif(message.content.startswith("pls ring all") and message.author.voice != None):
         if(((time.time() - client.last_command_time) > 30)):
             try:
                 client.last_command_time = time.time()
