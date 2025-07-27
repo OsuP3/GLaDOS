@@ -1,17 +1,22 @@
 import os
-import yt_dlp
 import asyncio
-import random
 import time
-from datetime import datetime
-import aiohttp
+from datetime import datetime, timedelta
 import discord
-from responses import get_response
+
+from openai import OpenAI
+openai_api_key = os.getenv("OPENAI_API_KEY")
+GPT_MODEL = "gpt-4-turbo"
 
 from discord.ext import bridge
-from dotenv import load_dotenv, dotenv_values
-
+from dotenv import load_dotenv
 load_dotenv()
+
+import GLaDOS_logging
+from GLaDOS_help import *
+from responses import get_response
+GLaDOS_active_conversations = {}  # channel_id: datetime of expiry
+CONVERSATION_TIMEOUT = timedelta(minutes=2)
 
 class PyCordBot(bridge.Bot):
     intents = discord.Intents.all()
@@ -20,6 +25,7 @@ class PyCordBot(bridge.Bot):
     last_command_time = time.time()
 
 client = PyCordBot(intents=PyCordBot.intents, command_prefix = "!")
+openai_client = OpenAI(api_key=openai_api_key)
 
 # global channels and roles
 voicechannel   = None
@@ -40,6 +46,8 @@ call_start_message = None
 
 # For debug modifications
 guild_items = {}
+
+channel_histories = {}  # channel_id: list of {"role": ..., "content": ...}
 
 @client.listen()
 async def on_ready():
@@ -91,20 +99,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
     elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time is not None):
         call_duration = time.time() - call_begin_time
-        if call_duration < 60:
-            call_duration_msg = "a few seconds"
-        elif (call_duration // 60 == 1):
-            call_duration_msg = "a minute"
-        elif (call_duration // 60) < 60:
-            call_duration_msg = f"{int(call_duration//60)} minutes"
-        elif (call_duration // 3600 == 1):
-            call_duration_msg = f"an hour"
-        elif (call_duration // 3600 < 24):
-            call_duration_msg = f"{int(call_duration // 3600)} hours"
-        elif ((call_duration // 3600) == 24):
-            call_duration_msg = f"a day"
-        else:
-            call_duration_msg = f"{int(call_duration // (3600 * 24))} days"
+        call_duration_msg = duration_msg(call_duration)
         await call_start_message.edit(content=f"{call_start_message.content[:-19]} started a call that lasted {call_duration_msg}")
         call_begin_time = None
 
@@ -119,6 +114,17 @@ async def on_message(message: discord.Message):
     if(channel != logchannel and channel != datalogchannel):
         await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
     
+    now = datetime.now()
+    active_until = GLaDOS_active_conversations.get(channel.id)
+
+    if message.author != client.user and ("glados" in str(message.content).lower() or (active_until and now < active_until)):
+        history = channel_histories.setdefault(channel.id, [])
+        history.append({"role": "user", "content": message.content})
+        if len(history) > 10:
+            history = history[-10:]
+            channel_histories[channel.id] = history
+        await glados_response(message, history, now, channel.id)
+
     if channel == debugchannel:
         message = message.content.lower()
         message_split = message.split(" ")
@@ -139,9 +145,6 @@ async def on_message(message: discord.Message):
                 await debugchannel.send(f"Cooldown reset.")
         except Exception as e:
             print("Exception:", e)
-
-    elif(message.author != client.user and "glados" in str(message.content).lower()):
-        await channel.send(get_response(message.content, message.author.name))
     elif(message.content.startswith("pls ring all") and message.author.voice != None):
         if(((time.time() - client.last_command_time) > 30)):
             try:
@@ -176,40 +179,56 @@ async def on_message(message: discord.Message):
         else:
             print("Cooldown")
 
-@client.event
-async def on_message_edit(before:discord.message, after:discord.message):
-    channel = discord.utils.get(guild.text_channels, name=str(before.channel))
-
-    if(channel != logchannel):
-        await logchannel.send(f"EDIT: {str(channel).title()}/{before.author}: original: ( {before.content} ) - > edited: ( {after.content} )")
-@client.event
-async def on_message_delete(message: discord.Message):
-    channel = discord.utils.get(guild.text_channels, name=str(message.channel))
-
-    if(channel != logchannel):
-        await logchannel.send(f"DELETED: {str(channel).title()}/{message.author}: {message.content}")
-@client.event
-async def on_raw_message_delete(data: discord.RawMessageDeleteEvent):
-    channel = client.get_channel(data.channel_id)
-
-    if(data.cached_message == None):
-        await logchannel.send(f"UNCACHED DELETED (check data) / ID = {data.message_id}")
-    if(channel != logchannel and channel != datalogchannel): 
-        await datalogchannel.send(f"DELETED/ID: {data.message_id}/: {str(channel).title()}/DATA: {data.cached_message}")
-@client.event
-async def on_raw_message_edit(data: discord.RawMessageUpdateEvent):
-    channel = client.get_channel(data.channel_id)
-
-    if(data.cached_message ==None):
-        await logchannel.send(f"UNCACHED EDIT (check data) / ID = {data.message_id}") 
-
-    if(channel != logchannel and channel != datalogchannel):
-        await datalogchannel.send(f"EDIT/ID: {data.message_id}/: {str(channel).title()}/DATA: {data.cached_message}")
 
 @client.bridge_command(description = "Ping, Pong!")
 async def ping(ctx):
     latency = (str(client.latency)).split('.')[1][1:3]
     await ctx.respond(f"Pong!, Bot replied in {latency} ms")
+
+@client.bridge_command(description = "Ring a friend")
+async def ring(ctx):
+    pass
+
+async def glados_response(message: discord.Message, history, now, channel_id):
+    # Add system prompt at the start
+    messages = [
+        {"role": "system", "content":
+            "You are GLaDOS from Portal. "
+            "Only reply if you are being addressed or if it is clear from the conversation that the user is talking to you. "
+            "If the conversation is not about you, reply with (Nothing). "
+            "You are in a discord server with administrator privileges. "
+            "Do not try to be helpful. You are not here to help or assist anyone with anything. "
+            "Do not use quotes or em dashes in your replies. "
+            "Occasionally use AM quotes, but speak them as your own words, do not inform anyone they are AM quotes. "
+            "You should interact with users when they try, you are here as a comedic robot so don't ignore people too much. "
+            "Respond with ... only if you are intentionally ignoring someone after they repeatedly try to get your attention. "
+            "Do not use ... for every message. Most of the time, reply as GLaDOS would, unless you truly want to ignore the user. "
+            "Reply with \"(Nothing)\" only if the message truly does not require a response."
+            "You should not be replying to messages that don't involve you."
+            "Don't say sorry unless you're being sarcastic. "
+            "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer."
+        }
+    ] + history
+
+    response = openai_client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=messages,
+        temperature=0
+    )
+    output_text = response.choices[0].message.content
+    print("person says:", message.content)
+    print("glados:", output_text)
+    # Add bot reply to history
+    history.append({"role": "assistant", "content": output_text})
+    if len(history) > 10:
+        history = history[-10:]
+        channel_histories[message.channel.id] = history
+
+    if "(Nothing)" in output_text:
+        return
+    else:
+        await message.channel.send(output_text)
+        GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
 
 async def main_bot():
     print("bot is starting")
