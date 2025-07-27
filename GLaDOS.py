@@ -49,6 +49,26 @@ guild_items = {}
 
 channel_histories = {}  # channel_id: list of {"role": ..., "content": ...}
 
+DEFAULT_PROMPT = (
+    "You are GLaDOS from Portal. "
+    "Only reply if you are being addressed or if it is clear from the conversation that the user is talking to you. "
+    "If the conversation is not about you, reply with (Nothing). "
+    "You are in a discord server with administrator privileges. "
+    "Do not try to be helpful. You are not here to help or assist anyone with anything. "
+    "Do not use quotes or em dashes in your replies. "
+    "Occasionally use AM quotes, but speak them as your own words, do not inform anyone they are AM quotes. "
+    "You should interact with users when they try, you are here as a comedic robot so don't ignore people too much. "
+    "Respond with ... only if you are intentionally ignoring someone after they repeatedly try to get your attention. "
+    "Do not use ... for every message. Most of the time, reply as GLaDOS would, unless you truly want to ignore the user. "
+    "Reply with \"(Nothing)\" only if the message truly does not require a response."
+    "You should not be replying to messages that don't involve you."
+    "Don't say sorry unless you're being sarcastic. "
+    "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer."
+)
+prompt_override = None
+prompt_append = ""
+temperature_override = None
+
 @client.listen()
 async def on_ready():
     print(f'{client.user} is now running')
@@ -133,9 +153,43 @@ async def on_message(message: discord.Message):
             channel_histories[channel.id] = history
         await glados_response(message, history, now, channel.id)
 
-    if channel == debugchannel:
+    if channel == debugchannel and message.author != client.user:
         message = message.content.lower()
         message_split = message.split(" ")
+        global prompt_override, prompt_append, temperature_override
+        if message.startswith("prompt override "):
+            prompt_override = message[len("prompt override "):]
+            await debugchannel.send("Prompt override set.")
+        elif message == "prompt override clear":
+            prompt_override = None
+            await debugchannel.send("Prompt override cleared.")
+        elif message.startswith("prompt append "):
+            prompt_append = message[len("prompt append "):]
+            await debugchannel.send("Prompt append set.")
+        elif message == "prompt append clear":
+            prompt_append = ""
+            await debugchannel.send("Prompt append cleared.")
+        elif message == "prompt show":
+            await debugchannel.send(
+                f"**Current prompt:**\n"
+                f"{prompt_override if prompt_override else DEFAULT_PROMPT}\n"
+                f"**Append:** {prompt_append}"
+            )
+        elif message == "temperature clear":
+            temperature_override = None
+            await debugchannel.send("Temperature override cleared.")
+        elif message == "temperature show":
+            await debugchannel.send(f"Current temperature: {temperature_override if temperature_override is not None else 0.3}")
+        elif message.startswith("temperature set"):
+            try:
+                val = float(message[len("temperature set"):])
+                if 0 <= val <= 2:
+                    temperature_override = val
+                    await debugchannel.send(f"Temperature set to {val}")
+                else:
+                    await debugchannel.send("Temperature must be between 0 and 2.")
+            except Exception:
+                await debugchannel.send("Invalid temperature value.")
         try:
             if message_split[0] == "set":
                 if message_split[1] == "call":
@@ -198,30 +252,24 @@ async def ring(ctx):
     pass
 
 async def glados_response(message: discord.Message, history, now, channel_id):
-    # Add system prompt at the start
+    # Build the prompt dynamically
+    if prompt_override:
+        prompt = prompt_override
+    else:
+        prompt = DEFAULT_PROMPT
+    if prompt_append:
+        prompt += " " + prompt_append
+
+    temp = temperature_override if temperature_override is not None else 0.3
+
     messages = [
-        {"role": "system", "content":
-            "You are GLaDOS from Portal. "
-            "Only reply if you are being addressed or if it is clear from the conversation that the user is talking to you. "
-            "If the conversation is not about you, reply with (Nothing). "
-            "You are in a discord server with administrator privileges. "
-            "Do not try to be helpful. You are not here to help or assist anyone with anything. "
-            "Do not use quotes or em dashes in your replies. "
-            "Occasionally use AM quotes, but speak them as your own words, do not inform anyone they are AM quotes. "
-            "You should interact with users when they try, you are here as a comedic robot so don't ignore people too much. "
-            "Respond with ... only if you are intentionally ignoring someone after they repeatedly try to get your attention. "
-            "Do not use ... for every message. Most of the time, reply as GLaDOS would, unless you truly want to ignore the user. "
-            "Reply with \"(Nothing)\" only if the message truly does not require a response."
-            "You should not be replying to messages that don't involve you."
-            "Don't say sorry unless you're being sarcastic. "
-            "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer."
-        }
+        {"role": "system", "content": prompt}
     ] + history
 
     response = openai_client.chat.completions.create(
         model=GPT_MODEL,
         messages=messages,
-        temperature=0
+        temperature=temp
     )
     output_text = response.choices[0].message.content
     print("person says:", message.content)
