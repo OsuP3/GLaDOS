@@ -105,6 +105,14 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 @client.event
 async def on_message(message: discord.Message):
+    # Always update history for context (even if GLaDOS doesn't reply)
+    if message.author != client.user:
+        history = channel_histories.setdefault(message.channel.id, [])
+        history.append({"role": "user", "content": message.content})
+        if len(history) > 10:
+            history = history[-10:]
+            channel_histories[message.channel.id] = history
+
     # Channel message was sent from 
     channel = message.channel
 
