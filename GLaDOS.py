@@ -1,8 +1,22 @@
 import os
 import asyncio
 import time
+import requests
 from datetime import datetime, timedelta
 import discord
+
+# Try to import media control server at startup
+try:
+    print("Attempting to import media control server...")
+    from media_control_server import start_media_server, trigger_toggle_command
+    MEDIA_SERVER_AVAILABLE = True
+    print("Media control server imported successfully!")
+except ImportError as e:
+    print(f"Failed to import media control server: {e}")
+    MEDIA_SERVER_AVAILABLE = False
+except Exception as e:
+    print(f"Unexpected error importing media control server: {e}")
+    MEDIA_SERVER_AVAILABLE = False
 
 from openai import OpenAI
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -39,6 +53,7 @@ guestrole      = None
 datalogchannel = None
 remotechannel  = None
 guild          = None
+pause_role     = None
 
 # For keeping track of call time and adding length to original message
 call_begin_time    = None
@@ -74,7 +89,7 @@ async def on_ready():
     print(f'{client.user} is now running')
 
     # define channels and roles
-    global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
+    global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel, pause_role
     guild          = client.get_guild(int(os.getenv("GUILD_ID")))
     debugchannel   = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
     voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
@@ -86,10 +101,23 @@ async def on_ready():
     guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
     datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
     remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
-    
+    pause_role  = guild.get_role(int(os.getenv("PAUSE_ROLE_ID")))
+
     # For debug modifications
     global guild_items
     guild_items = {}
+    
+    # Start the media control HTTP server for browser extension communication
+    if MEDIA_SERVER_AVAILABLE:
+        try:
+            if start_media_server():
+                print("Media Control HTTP Server started successfully on port 8766")
+            else:
+                print("Failed to start Media Control HTTP Server")
+        except Exception as e:
+            print(f"Error starting Media Control Server: {e}")
+    else:
+        print("Media Control Server not available - using fallback method only")
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -250,6 +278,66 @@ async def ping(ctx):
 @client.bridge_command(description = "Ring a friend")
 async def ring(ctx):
     pass
+
+# Cooldown tracking for pause_screen command
+pause_screen_last_used = 0
+PAUSE_SCREEN_COOLDOWN = 5  # 5 seconds cooldown
+
+@client.bridge_command(description = "Pause/Unpause Osu's Video (spam this and I'll remove your perms)")
+async def togglepausevid(ctx):
+    global pause_screen_last_used
+    
+    # Check if user has the required role
+    if pause_role not in ctx.author.roles:
+        await ctx.respond("You don't have permission to use this command.", ephemeral=True)
+        return
+    
+    # Check if user is in voice channel
+    if not ctx.author.voice or ctx.author.voice.channel != voicechannel:
+        await ctx.respond("You must be in the voice channel to use this command.", ephemeral=True)
+        return
+    
+    # Check if host is in voice channel and screen sharing
+    host_member = guild.get_member(int(os.getenv("HOST_ID")))
+
+    if not host_member or not host_member.voice or host_member.voice.channel != voicechannel:
+        await ctx.respond("Command only works when the host is in the voice channel.", ephemeral=True)
+        return
+    if not host_member.voice.self_stream:
+        await ctx.respond("Command only works when the host is sharing their screen.", ephemeral=True)
+        return
+    
+    # Check cooldown
+    current_time = time.time()
+    if current_time - pause_screen_last_used < PAUSE_SCREEN_COOLDOWN:
+        remaining_time = PAUSE_SCREEN_COOLDOWN - (current_time - pause_screen_last_used)
+        await ctx.respond(f"Command on cooldown. Try again in {remaining_time:.1f} seconds.", ephemeral=True)
+        return
+    
+    pause_screen_last_used = current_time
+    
+    # Use HTTP server for browser extensions
+    if MEDIA_SERVER_AVAILABLE:
+        try:
+            success = trigger_toggle_command()
+            
+            if success:
+                await ctx.respond("📺 **Media toggle sent to browser extensions!**\n"
+                                "Videos should be paused/unpaused on all connected browsers.", ephemeral=True)
+                await logchannel.send(f"PAUSE: {ctx.author} used togglepausevid command")
+                return
+            else:
+                await ctx.respond("❌ **Failed to send toggle command.**\n"
+                                "Media server is not responding.", ephemeral=True)
+                return
+                
+        except Exception as e:
+            await ctx.respond(f"❌ **Error sending toggle command:** {str(e)}", ephemeral=True)
+            return
+    else:
+        await ctx.respond("❌ **Media server not available.**\n"
+                        "Browser extension system is not running.", ephemeral=True)
+        return
 
 async def glados_response(message: discord.Message, history, now, channel_id):
     # Build the prompt dynamically

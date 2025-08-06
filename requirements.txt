@@ -4,3 +4,4 @@ asyncio
 yt-dlp
 pyNaCL
 openai
+requests
