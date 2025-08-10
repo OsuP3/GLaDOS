@@ -5,6 +5,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 import discord
+import socket
 
 MEDIA_SERVER_PORT = 8766
 # Set this to your PC's LAN IP if running bot from another device
@@ -13,12 +14,22 @@ MEDIA_SERVER_IP = '192.168.1.86'  # Change to your PC's LAN IP if needed
 def get_media_server_ip():
     return MEDIA_SERVER_IP
 
-# Try to import media control server at startup
+
+# Only import and start media control server if running on PC
+MEDIA_SERVER_AVAILABLE = False
+print(f"[GLaDOS] This machine's hostname is: {socket.gethostname()}")
+PC_HOSTNAMES = ["lol"]  # Replace 'DESKTOP-XXXX' with your actual PC hostname if needed
+PC_IPS = ["127.0.0.1", "192.168.1.86"]  # Add your PC's LAN IP here
 try:
-    print("Attempting to import media control server...")
-    from media_control_server import start_media_server, trigger_toggle_command
-    MEDIA_SERVER_AVAILABLE = True
-    print("Media control server imported successfully!")
+    current_hostname = socket.gethostname().lower()
+    current_ip = socket.gethostbyname(socket.gethostname())
+    if (current_hostname in [h.lower() for h in PC_HOSTNAMES]) or (current_ip in PC_IPS):
+        print("Detected PC environment. Attempting to import media control server...")
+        from media_control_server import start_media_server, trigger_toggle_command
+        MEDIA_SERVER_AVAILABLE = True
+        print("Media control server imported successfully!")
+    else:
+        print(f"Not running on PC (hostname: {current_hostname}, ip: {current_ip}), will not start media control server.")
 except ImportError as e:
     print(f"Failed to import media control server: {e}")
     MEDIA_SERVER_AVAILABLE = False
