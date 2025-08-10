@@ -6,19 +6,12 @@ import requests
 from datetime import datetime, timedelta
 import discord
 
-# Media server host config
-MEDIA_SERVER_PRESETS = {
-    'pc': '127.0.0.1',
-    'pi': 'raspberrypi.local',
-}
 MEDIA_SERVER_PORT = 8766
-MEDIA_SERVER_HOST = os.getenv('MEDIA_SERVER_HOST', 'pc')  # default to 'pc'
-MEDIA_SERVER_CUSTOM = os.getenv('MEDIA_SERVER_CUSTOM', '')
+# Set this to your PC's LAN IP if running bot from another device
+MEDIA_SERVER_IP = '192.168.1.86'  # Change to your PC's LAN IP if needed
 
 def get_media_server_ip():
-    if MEDIA_SERVER_HOST == 'custom' and MEDIA_SERVER_CUSTOM:
-        return MEDIA_SERVER_CUSTOM
-    return MEDIA_SERVER_PRESETS.get(MEDIA_SERVER_HOST, MEDIA_SERVER_HOST)
+    return MEDIA_SERVER_IP
 
 # Try to import media control server at startup
 try:
@@ -341,24 +334,7 @@ async def togglepausevid(ctx):
         await ctx.respond(f"❌ **Error sending toggle command to {get_media_server_ip()}:** {str(e)}", ephemeral=True)
         return
 
-# Command to set media server target
-@client.bridge_command(description = "Set media server target (pc, pi, or custom IP)")
-async def setmediaserver(ctx, target: str, custom_ip: str = None):
-    global MEDIA_SERVER_HOST, MEDIA_SERVER_CUSTOM
-    valid = ["pc", "pi", "custom"]
-    if target not in valid:
-        await ctx.respond(f"Invalid target. Use one of: pc, pi, custom", ephemeral=True)
-        return
-    MEDIA_SERVER_HOST = target
-    if target == "custom":
-        if not custom_ip:
-            await ctx.respond("Please provide a custom IP or hostname.", ephemeral=True)
-            return
-        MEDIA_SERVER_CUSTOM = custom_ip
-        await ctx.respond(f"Media server set to custom: {custom_ip}", ephemeral=True)
-    else:
-        MEDIA_SERVER_CUSTOM = ''
-        await ctx.respond(f"Media server set to {target} ({get_media_server_ip()})", ephemeral=True)
+
 
 async def glados_response(message: discord.Message, history, now, channel_id):
     # Build the prompt dynamically
