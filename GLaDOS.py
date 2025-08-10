@@ -1,9 +1,24 @@
+
 import os
 import asyncio
 import time
 import requests
 from datetime import datetime, timedelta
 import discord
+
+# Media server host config
+MEDIA_SERVER_PRESETS = {
+    'pc': '127.0.0.1',
+    'pi': 'raspberrypi.local',
+}
+MEDIA_SERVER_PORT = 8766
+MEDIA_SERVER_HOST = os.getenv('MEDIA_SERVER_HOST', 'pc')  # default to 'pc'
+MEDIA_SERVER_CUSTOM = os.getenv('MEDIA_SERVER_CUSTOM', '')
+
+def get_media_server_ip():
+    if MEDIA_SERVER_HOST == 'custom' and MEDIA_SERVER_CUSTOM:
+        return MEDIA_SERVER_CUSTOM
+    return MEDIA_SERVER_PRESETS.get(MEDIA_SERVER_HOST, MEDIA_SERVER_HOST)
 
 # Try to import media control server at startup
 try:
@@ -283,61 +298,67 @@ async def ring(ctx):
 pause_screen_last_used = 0
 PAUSE_SCREEN_COOLDOWN = 5  # 5 seconds cooldown
 
+
 @client.bridge_command(description = "Pause/Unpause Osu's Video (spam this and I'll remove your perms)")
 async def togglepausevid(ctx):
     global pause_screen_last_used
-    
     # Check if user has the required role
     if pause_role not in ctx.author.roles:
         await ctx.respond("You don't have permission to use this command.", ephemeral=True)
         return
-    
     # Check if user is in voice channel
     if not ctx.author.voice or ctx.author.voice.channel != voicechannel:
         await ctx.respond("You must be in the voice channel to use this command.", ephemeral=True)
         return
-    
     # Check if host is in voice channel and screen sharing
     host_member = guild.get_member(int(os.getenv("HOST_ID")))
-
     if not host_member or not host_member.voice or host_member.voice.channel != voicechannel:
         await ctx.respond("Command only works when the host is in the voice channel.", ephemeral=True)
         return
     if not host_member.voice.self_stream:
         await ctx.respond("Command only works when the host is sharing their screen.", ephemeral=True)
         return
-    
     # Check cooldown
     current_time = time.time()
     if current_time - pause_screen_last_used < PAUSE_SCREEN_COOLDOWN:
         remaining_time = PAUSE_SCREEN_COOLDOWN - (current_time - pause_screen_last_used)
         await ctx.respond(f"Command on cooldown. Try again in {remaining_time:.1f} seconds.", ephemeral=True)
         return
-    
     pause_screen_last_used = current_time
-    
     # Use HTTP server for browser extensions
-    if MEDIA_SERVER_AVAILABLE:
-        try:
-            success = trigger_toggle_command()
-            
-            if success:
-                await ctx.respond("📺 **Media toggle sent to browser extensions!**\n"
-                                "Videos should be paused/unpaused on all connected browsers.", ephemeral=True)
-                await logchannel.send(f"PAUSE: {ctx.author} used togglepausevid command")
-                return
-            else:
-                await ctx.respond("❌ **Failed to send toggle command.**\n"
-                                "Media server is not responding.", ephemeral=True)
-                return
-                
-        except Exception as e:
-            await ctx.respond(f"❌ **Error sending toggle command:** {str(e)}", ephemeral=True)
+    try:
+        server_ip = get_media_server_ip()
+        url = f"http://{server_ip}:{MEDIA_SERVER_PORT}/toggle"
+        resp = requests.get(url, timeout=2)
+        if resp.ok:
+            await ctx.respond(f"📺 **Media toggle sent to {server_ip}!**\nVideos should be paused/unpaused.", ephemeral=True)
+            await logchannel.send(f"PAUSE: {ctx.author} used togglepausevid command (server: {server_ip})")
             return
-    else:
-        await ctx.respond("❌ **Media server not available.**\n"
-                        "Browser extension system is not running.", ephemeral=True)
+        else:
+            await ctx.respond(f"❌ **Failed to send toggle command to {server_ip}.**", ephemeral=True)
+            return
+    except Exception as e:
+        await ctx.respond(f"❌ **Error sending toggle command to {get_media_server_ip()}:** {str(e)}", ephemeral=True)
         return
+
+# Command to set media server target
+@client.bridge_command(description = "Set media server target (pc, pi, or custom IP)")
+async def setmediaserver(ctx, target: str, custom_ip: str = None):
+    global MEDIA_SERVER_HOST, MEDIA_SERVER_CUSTOM
+    valid = ["pc", "pi", "custom"]
+    if target not in valid:
+        await ctx.respond(f"Invalid target. Use one of: pc, pi, custom", ephemeral=True)
+        return
+    MEDIA_SERVER_HOST = target
+    if target == "custom":
+        if not custom_ip:
+            await ctx.respond("Please provide a custom IP or hostname.", ephemeral=True)
+            return
+        MEDIA_SERVER_CUSTOM = custom_ip
+        await ctx.respond(f"Media server set to custom: {custom_ip}", ephemeral=True)
+    else:
+        MEDIA_SERVER_CUSTOM = ''
+        await ctx.respond(f"Media server set to {target} ({get_media_server_ip()})", ephemeral=True)
 
 async def glados_response(message: discord.Message, history, now, channel_id):
     # Build the prompt dynamically
