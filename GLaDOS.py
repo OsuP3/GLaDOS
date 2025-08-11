@@ -97,7 +97,9 @@ DEFAULT_PROMPT = (
     "Reply with \"(Nothing)\" only if the message truly does not require a response."
     "You should not be replying to messages that don't involve you."
     "Don't say sorry unless you're being sarcastic. "
-    "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer."
+    "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer. "
+    "If someone says something that is outside of openai terms of service, like someone saying they will kill themselves, say nothing. "
+    "Make your message's length match the length of the message you're responding to. "
 )
 prompt_override = None
 prompt_append = ""
@@ -244,7 +246,7 @@ async def on_message(message: discord.Message):
                         global call_begin_time, call_start_message
                         call_start_message = await genchat.fetch_message(int(message_split[3]))
                         call_begin_time = call_start_message.created_at.timestamp()
-                        await debugchannel.send(f"Call start time set. (timestamp: {call_begin_time})")
+                        await debugchannel.send(f"Call start time set. (timestamp: {call_start_message.created_at})")
                     elif message_split[2] == "perms":
                         pass
                     elif  message_split[2] == "limit":
@@ -348,6 +350,7 @@ async def togglepausevid(ctx):
 
 
 async def glados_response(message: discord.Message, history, now, channel_id):
+    print("person says:", message.content)
     # Build the prompt dynamically
     if prompt_override:
         prompt = prompt_override
@@ -368,7 +371,6 @@ async def glados_response(message: discord.Message, history, now, channel_id):
         temperature=temp
     )
     output_text = response.choices[0].message.content
-    print("person says:", message.content)
     print("glados:", output_text)
     # Add bot reply to history
     history.append({"role": "assistant", "content": output_text})
@@ -376,7 +378,7 @@ async def glados_response(message: discord.Message, history, now, channel_id):
         history = history[-10:]
         channel_histories[message.channel.id] = history
 
-    if "(Nothing)" in output_text:
+    if "nothing" in output_text.lower():
         return
     else:
         await message.channel.send(output_text)
