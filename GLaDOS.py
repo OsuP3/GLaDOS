@@ -8,7 +8,7 @@ from openai import OpenAI
 openai_api_key = os.getenv("OPENAI_API_KEY")
 GPT_MODEL = "gpt-4-turbo"
 
-from discord.ext import bridge
+from discord.ext import bridge, commands
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -145,6 +145,7 @@ async def on_message(message: discord.Message):
     now = datetime.now()
     active_until = GLaDOS_active_conversations.get(channel.id)
 
+    # Someone chats with glados
     if message.author != client.user and ("glados" in str(message.content).lower() or (active_until and now < active_until)):
         history = channel_histories.setdefault(channel.id, [])
         history.append({"role": "user", "content": message.content})
@@ -153,6 +154,7 @@ async def on_message(message: discord.Message):
             channel_histories[channel.id] = history
         await glados_response(message, history, now, channel.id)
 
+    # Debug command sent
     if channel == debugchannel and message.author != client.user:
         message = message.content.lower()
         message_split = message.split(" ")
@@ -207,39 +209,6 @@ async def on_message(message: discord.Message):
                 await debugchannel.send(f"Cooldown reset.")
         except Exception as e:
             print("Exception:", e)
-    elif(message.content.startswith("pls ring all") and message.author.voice != None):
-        if(((time.time() - client.last_command_time) > 30)):
-            try:
-                client.last_command_time = time.time()
-                await message.delete()
-                await callchat.set_permissions(member_role, read_messages=True)
-                await callchat.send(f"Somebody rang @everyone")
-                await asyncio.sleep(30)
-                await callchat.set_permissions(member_role, read_messages=False)
-            except Exception as e:
-                print(e)
-    elif(message.content.startswith("pls ring") and message.author.voice != None):
-        if(((time.time() - client.last_command_time) > 30)):
-            try:
-                memberName = message.content[9:]
-                member     = None
-
-                for guild_member in guild.members:
-                    if guild_member.display_name == memberName or guild_member.name == memberName:
-                        member = guild_member
-
-                if(member != None and member.voice == None):
-                    client.last_command_time = time.time()
-                    print(f"Ringing {memberName}")
-                    await callchat.set_permissions(member, read_messages=True)
-                    await callchat.send(f"Ringing <@{member.id}>")
-                    await message.delete()
-                    await asyncio.sleep(30)
-                    await callchat.set_permissions(member, read_messages=None)
-            except Exception as e:
-                print(e)
-        else:
-            print("Cooldown")
 
 
 @client.bridge_command(description = "Ping, Pong!")
@@ -248,8 +217,52 @@ async def ping(ctx):
     await ctx.respond(f"Pong!, Bot replied in {latency} ms")
 
 @client.bridge_command(description = "Ring a friend")
-async def ring(ctx):
-    pass
+@commands.cooldown(1, 30, commands.BucketType.default)
+async def ring(ctx, member: discord.Member):
+    if ctx.channel != genchat:  # Only allow in genchat
+        await ctx.respond("This command can only be used in general chat.", ephemeral=True)
+        return
+    if ctx.author.voice is None:
+        await ctx.respond("You need to be in a voice channel to ring someone.", ephemeral=True)
+        return
+    try:
+        if(member.voice == None):
+            print(f"Ringing {member.display_name}")
+            await ctx.respond(f"Ringing {member.display_name}", ephemeral=True)
+            await callchat.set_permissions(member, read_messages=True)
+            await callchat.send(f"Ringing <@{member.id}>")
+            await asyncio.sleep(30)
+            await callchat.set_permissions(member, read_messages=None)
+        else:
+            await ctx.respond(f"{member.display_name} is already in the voice channel.", ephemeral=True)
+    except Exception as e:
+        print(e)
+
+@client.bridge_command(description = "Ring All")
+@commands.cooldown(1, 120, commands.BucketType.default)
+async def ringall(ctx):
+    if ctx.channel != genchat:  # Only allow in genchat
+        await ctx.respond("This command can only be used in general chat.", ephemeral=True)
+        return
+    if ctx.author.voice is None:
+        await ctx.respond("You need to be in a voice channel to ring someone.", ephemeral=True)
+        return
+    try:
+        await callchat.set_permissions(member_role, read_messages=True)
+        await callchat.send(f"Somebody rang @everyone")
+        await asyncio.sleep(30)
+        await callchat.set_permissions(member_role, read_messages=False)
+    except Exception as e:
+        print(e)
+
+@ring.error
+@ringall.error
+async def ring_commands_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        command_name = ctx.command.name
+        await ctx.respond(f"{command_name.capitalize()} is on cooldown for {error.retry_after:.0f} seconds.", ephemeral=True)
+    else:
+        print(f"{ctx.command.name} command error: {error}")
 
 async def glados_response(message: discord.Message, history, now, channel_id):
     # Build the prompt dynamically
