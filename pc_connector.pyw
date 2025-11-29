@@ -14,7 +14,9 @@ except ImportError:
 
 # ================= CONFIGURATION =================
 SSH_TARGET = "osu@raspi" 
-REMOTE_FLAG = "/home/osu/development/GLaDOS/media_toggle_request.flag"
+SSH_KEY_PATH = r"C:\Users\fznv6\.ssh\id_rsa"
+SSH_PASSWORD = "" 
+REMOTE_FLAG = "/home/osu/development/GLaDOS/media_toggle_request.flag" if "--dev" in sys.argv else "/home/osu/DiscordBot/GLaDOS/media_toggle_request.flag"
 PORT = 8766
 # =================================================
 
@@ -42,7 +44,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return # Silence default logs
 
-def ssh_loop(password):
+def ssh_loop(password=None, key_path=None):
     global TOGGLE_NEEDED
     
     # Parse user@host
@@ -58,7 +60,13 @@ def ssh_loop(password):
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     
     try:
-        client.connect(hostname, username=username, password=password)
+        connect_args = {"username": username}
+        if password:
+            connect_args["password"] = password
+        if key_path:
+            connect_args["key_filename"] = key_path
+            
+        client.connect(hostname, **connect_args)
         print(f"Connected! Watching for: {REMOTE_FLAG}")
         
         while True:
@@ -78,13 +86,13 @@ def ssh_loop(password):
                 print(f"Connection lost: {e}")
                 print("Reconnecting...")
                 try:
-                    client.connect(hostname, username=username, password=password)
+                    client.connect(hostname, **connect_args)
                     print("Reconnected!")
                 except:
                     time.sleep(2)
 
     except paramiko.AuthenticationException:
-        print("Authentication failed. Wrong password?")
+        print("Authentication failed. Check password or key.")
         sys.exit(1)
     except Exception as e:
         print(f"Connection error: {e}")
@@ -100,13 +108,19 @@ if __name__ == "__main__":
     t.start()
     print(f"Local Server running on port {PORT}")
     
-    # 2. Get Password
-    print(f"Enter password for {SSH_TARGET}:")
-    pwd = getpass.getpass()
+    # 2. Get Credentials
+    pwd = SSH_PASSWORD
+    
+    if not pwd and not SSH_KEY_PATH:
+        print(f"Enter password for {SSH_TARGET} (or press Enter to try default SSH keys):")
+        try:
+            pwd = getpass.getpass()
+        except:
+            pass
     
     # 3. Start the SSH Poller
     try:
-        ssh_loop(pwd)
+        ssh_loop(password=pwd if pwd else None, key_path=SSH_KEY_PATH)
     except KeyboardInterrupt:
         print("\nStopping...")
         sys.exit(0)
