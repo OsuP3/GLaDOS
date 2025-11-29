@@ -255,7 +255,7 @@ async def debug_command(interaction: discord.Interaction,
                         section: str,
                         action: str = None,
                         value: str = None):
-    if interaction.channel.id != int(os.getenv("DEBUGCHANNEL_ID")):
+    if interaction.channel.id != int(os.getenv("DEBUGCHANNEL_ID")) and not (section == "chatbot" and action == "stop"):
         await interaction.response.send_message("Wrong channel.", ephemeral=True)
         return
     global call_begin_time, call_start_message, prompt_override, prompt_append, temperature_override
