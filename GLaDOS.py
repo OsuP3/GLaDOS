@@ -12,9 +12,7 @@ from discord.ext import bridge, commands
 from dotenv import load_dotenv
 load_dotenv()
 
-import GLaDOS_logging
 from GLaDOS_help import *
-from responses import get_response
 GLaDOS_active_conversations = {}  # channel_id: datetime of expiry
 CONVERSATION_TIMEOUT = timedelta(minutes=2)
 
@@ -142,8 +140,9 @@ async def on_message(message: discord.Message):
         await genchat.send(message.content)
 
     if(channel != logchannel and channel != datalogchannel):
-        await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
-    
+        #await logchannel.send(f"TEXT/ID: {message.id}/: {str(channel).title()}/{message.author}: {message.content}")
+        await message.forward(logchannel)
+
     now = datetime.now()
     active_until = GLaDOS_active_conversations.get(channel.id)
 
@@ -324,6 +323,38 @@ async def glados_response(message: discord.Message, history, now, channel_id):
     else:
         await message.channel.send(output_text)
         GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
+
+# -----------------------------------------Logging
+@client.event
+async def on_message_edit(before:discord.message, after:discord.message):
+    channel = discord.utils.get(guild.text_channels, name=str(before.channel))
+
+    if(channel != logchannel):
+        await logchannel.send(f"EDIT: {str(channel).title()}/{before.author}: original: ( {before.content} ) - > edited: ( {after.content} )")
+@client.event
+async def on_message_delete(message: discord.Message):
+    channel = discord.utils.get(guild.text_channels, name=str(message.channel))
+
+    if(channel != logchannel):
+        await logchannel.send(f"DELETED: {str(channel).title()}/{message.author}: {message.content}")
+@client.event
+async def on_raw_message_delete(data: discord.RawMessageDeleteEvent):
+    channel = client.get_channel(data.channel_id)
+
+    if(data.cached_message == None):
+        await logchannel.send(f"UNCACHED DELETED (check data) / ID = {data.message_id}")
+    if(channel != logchannel and channel != datalogchannel): 
+        await datalogchannel.send(f"DELETED/ID: {data.message_id}/: {str(channel).title()}/DATA: {data.cached_message}")
+@client.event
+async def on_raw_message_edit(data: discord.RawMessageUpdateEvent):
+    channel = client.get_channel(data.channel_id)
+
+    if(data.cached_message ==None):
+        await logchannel.send(f"UNCACHED EDIT (check data) / ID = {data.message_id}") 
+
+    if(channel != logchannel and channel != datalogchannel):
+        await datalogchannel.send(f"EDIT/ID: {data.message_id}/: {str(channel).title()}/DATA: {data.cached_message}")
+# -----------------------------------------Logging
 
 async def main_bot():
     print("bot is starting")

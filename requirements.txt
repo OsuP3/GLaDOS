@@ -1,4 +1,4 @@
-py-cord
+discord
 python-dotenv
 asyncio
 pyNaCL
