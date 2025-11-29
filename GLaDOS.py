@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from openai import OpenAI
+import requests
 
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -41,7 +42,7 @@ prompt_append = ""
 temperature_override = None
 
 # Globals populated in on_ready
-voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = None
+voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = pause_role = None
 call_begin_time = None
 call_start_message = None
 
@@ -59,7 +60,7 @@ openai_client = OpenAI(api_key=openai_api_key)
 @client.event
 async def on_ready():
     global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel
-    global member_role, guestrole, debugrole, datalogchannel, remotechannel
+    global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel
     guild          = client.get_guild(int(os.getenv("GUILD_ID")))
     debugchannel   = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
     voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
@@ -70,13 +71,44 @@ async def on_ready():
     member_role    = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
     guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
     debugrole      = guild.get_role(int(os.getenv("DEBUGROLE_ID")))
+    pause_role     = guild.get_role(int(os.getenv("PAUSE_ROLE_ID")))
     datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
     remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
     try:
-        await client.tree.sync(guild=guild)
+        if guild:
+            # Sync to the specific guild for immediate updates
+            client.tree.copy_global_to(guild=guild)
+            await client.tree.sync(guild=guild)
+            print(f"Synced commands to guild: {guild.name} ({guild.id})")
+        else:
+            print("GUILD_ID not found or guild not cached. Syncing globally...")
+            await client.tree.sync()
+            print("Synced commands globally")
     except Exception as e:
         print("Slash sync error:", e)
     print(f"{client.user} is now running")
+
+@client.command(name="sync")
+async def sync_commands(ctx):
+    # Manual sync command to fix "command not found" issues
+    # Checks if user has administrator permissions or is the host
+    is_admin = ctx.author.guild_permissions.administrator
+    host_id = os.getenv("HOST_ID")
+    is_host = host_id and str(ctx.author.id) == str(host_id)
+    
+    if is_admin or is_host:
+        msg = await ctx.send("Syncing commands...")
+        try:
+            if ctx.guild:
+                client.tree.copy_global_to(guild=ctx.guild)
+                synced = await ctx.bot.tree.sync(guild=ctx.guild)
+                await msg.edit(content=f"Synced {len(synced)} commands to the current guild.")
+            else:
+                await msg.edit(content="This command must be used in a guild.")
+        except Exception as e:
+            await msg.edit(content=f"Sync failed: {e}")
+    else:
+        await ctx.send("You are not authorized to sync commands.")
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -248,6 +280,70 @@ async def ring_errors(ctx: commands.Context, error):
             await ctx.reply(f"Cooldown {retry}s")
     else:
         print("ring command error:", error)
+
+@client.hybrid_command(name="togglepausevid", description="Pause/Unpause Osu's Video")
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def togglepausevid(ctx: commands.Context):
+    print(f"Pause prompted") 
+    # Check permissions
+    if pause_role and pause_role not in ctx.author.roles:
+        msg = "You don't have permission to use this command."
+        if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+        else: await ctx.reply(msg)
+        return
+
+    # Check voice state
+    if not ctx.author.voice or ctx.author.voice.channel != voicechannel:
+        msg = "You must be in the voice channel to use this command."
+        if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+        else: await ctx.reply(msg)
+        return
+
+    # Check host state
+    host_id = os.getenv("HOST_ID")
+    if host_id:
+        host_member = guild.get_member(int(host_id))
+        if not host_member or not host_member.voice or host_member.voice.channel != voicechannel:
+            msg = "Command only works when the host is in the voice channel."
+            if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+            else: await ctx.reply(msg)
+            return
+        if not host_member.voice.self_stream:
+            msg = "Command only works when the host is sharing their screen."
+            if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+            else: await ctx.reply(msg)
+            return
+
+    try:
+        # Create the flag file for SSH bridge
+        # Use absolute path to ensure it matches what pc_connector looks for
+        flag_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media_toggle_request.flag")
+        with open(flag_path, "w") as f:
+            f.write(str(time.time()))
+        
+        print(f"Flag created at: {flag_path}") # Debug print
+        
+        msg = " **Media toggle triggered!**"
+        if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+        else: await ctx.reply(msg)
+        
+        if logchannel:
+            await logchannel.send(f"PAUSE: {ctx.author} used togglepausevid command")
+
+    except Exception as e:
+        err_msg = f"**Error triggering toggle:** {str(e)}"
+        if ctx.interaction: await ctx.interaction.response.send_message(err_msg, ephemeral=True)
+        else: await ctx.reply(err_msg)
+
+@togglepausevid.error
+async def togglepausevid_error(ctx: commands.Context, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        retry = f"{error.retry_after:.1f}"
+        msg = f"Cooldown {retry}s"
+        if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+        else: await ctx.reply(msg)
+    else:
+        print("togglepausevid error:", error)
 
 # Single /debug slash command
 @client.tree.command(name="debug", description="Debug control")
