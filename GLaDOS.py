@@ -36,6 +36,7 @@ callchat       = None
 logchannel     = None
 member_role    = None
 guestrole      = None
+debugrole      = None
 datalogchannel = None
 remotechannel  = None
 guild          = None
@@ -74,7 +75,7 @@ async def on_ready():
     print(f'{client.user} is now running')
 
     # define channels and roles
-    global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
+    global guild, debugchannel, debugrole, voicechannel, guestchannel, genchat, callchat, logchannel, member_role, guestrole, datalogchannel, remotechannel
     guild          = client.get_guild(int(os.getenv("GUILD_ID")))
     debugchannel   = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
     voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
@@ -84,6 +85,7 @@ async def on_ready():
     logchannel     = client.get_channel(int(os.getenv("LOGCHANNEL_ID")))
     member_role    = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
     guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
+    debugrole      = guild.get_role(int(os.getenv("DEBUGROLE_ID")))
     datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
     remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
     
@@ -154,62 +156,86 @@ async def on_message(message: discord.Message):
             channel_histories[channel.id] = history
         await glados_response(message, history, now, channel.id)
 
-    # Debug command sent
-    if channel == debugchannel and message.author != client.user:
-        message = message.content.lower()
-        message_split = message.split(" ")
-        global prompt_override, prompt_append, temperature_override
-        if message.startswith("prompt override "):
-            prompt_override = message[len("prompt override "):]
-            await debugchannel.send("Prompt override set.")
-        elif message == "prompt override clear":
-            prompt_override = None
-            await debugchannel.send("Prompt override cleared.")
-        elif message.startswith("prompt append "):
-            prompt_append = message[len("prompt append "):]
-            await debugchannel.send("Prompt append set.")
-        elif message == "prompt append clear":
-            prompt_append = ""
-            await debugchannel.send("Prompt append cleared.")
-        elif message == "prompt show":
-            await debugchannel.send(
-                f"**Current prompt:**\n"
-                f"{prompt_override if prompt_override else DEFAULT_PROMPT}\n"
-                f"**Append:** {prompt_append}"
-            )
-        elif message == "temperature clear":
-            temperature_override = None
-            await debugchannel.send("Temperature override cleared.")
-        elif message == "temperature show":
-            await debugchannel.send(f"Current temperature: {temperature_override if temperature_override is not None else 0.3}")
-        elif message.startswith("temperature set"):
-            try:
-                val = float(message[len("temperature set"):])
-                if 0 <= val <= 2:
-                    temperature_override = val
-                    await debugchannel.send(f"Temperature set to {val}")
-                else:
-                    await debugchannel.send("Temperature must be between 0 and 2.")
-            except Exception:
-                await debugchannel.send("Invalid temperature value.")
-        try:
-            if message_split[0] == "set":
-                if message_split[1] == "call":
-                    if message_split[2] == "start":
-                        global call_begin_time, call_start_message
-                        call_start_message = await genchat.fetch_message(int(message_split[3]))
-                        call_begin_time = call_start_message.created_at.timestamp()
-                        await debugchannel.send(f"Call start time set. (timestamp: {call_begin_time})")
-                    elif message_split[2] == "perms":
-                        pass
-                    elif  message_split[2] == "limit":
-                        pass
-            elif message == "reset cooldown":
-                client.last_command_time = 0
-                await debugchannel.send(f"Cooldown reset.")
-        except Exception as e:
-            print("Exception:", e)
+@client.slash_command(description="Debug commands")
+@discord.option("section", choices=["chatbot", "call_start", "prompt", "temperature", "resetcooldown"])
+@discord.option("action", required=False, choices=["override", "append", "clear", "show", "set", "stop"])
+@discord.option("value", required=False)
+async def debug(ctx, section: str, action: str, value: str):
+    if ctx.channel.id != int(os.getenv("DEBUGCHANNEL_ID")):
+        await ctx.respond("This command can only be used in the debug channel.", ephemeral=True)
+        return
 
+    global call_begin_time, call_start_message, prompt_override, prompt_append, temperature_override
+
+    try:
+        if section == "resetcooldown":
+            client.last_command_time = 0
+            await ctx.respond("Cooldown reset.", ephemeral=True)
+            return
+        if section == "call_start":
+            if action == "set" and value:
+                try:
+                    call_start_message = await genchat.fetch_message(int(value))
+                    call_begin_time = call_start_message.created_at.timestamp()
+                    await ctx.respond(f"Call start time set. (timestamp: {call_begin_time})", ephemeral=True)
+                except:
+                    await ctx.respond("Invalid message ID", ephemeral=True)
+            else:
+                await ctx.respond("Unknown set action or missing value.", ephemeral=True)
+        elif section == "prompt":
+            if action == "override":
+                if value:
+                    prompt_override = value
+                    await ctx.respond("Prompt override set.", ephemeral=True)
+                else:
+                    await ctx.respond("Text required for override.", ephemeral=True)
+            elif action == "append":
+                if value:
+                    prompt_append = value
+                    await ctx.respond("Prompt append set.", ephemeral=True)
+                else:
+                    await ctx.respond("Text required for append.", ephemeral=True)
+            elif action == "clear":
+                prompt_override = None
+                prompt_append = ""
+                await ctx.respond("Prompt override and append cleared.", ephemeral=True)
+            elif action == "show":
+                await ctx.respond(
+                    f"Current prompt:\n{prompt_override if prompt_override else DEFAULT_PROMPT}\nAppend: {prompt_append}",
+                    ephemeral=True
+                )
+            else:
+                await ctx.respond("Unknown prompt action.", ephemeral=True)
+        elif section == "temperature":
+            if action == "set":
+                try:
+                    val = float(value) if value is not None else None
+                    if val is not None and 0 <= val <= 2:
+                        temperature_override = val
+                        await ctx.respond(f"Temperature set to {val}", ephemeral=True)
+                    else:
+                        await ctx.respond("Invalid temperature value (must be 0-2).", ephemeral=True)
+                except:
+                    await ctx.respond("Invalid temperature value.", ephemeral=True)
+            elif action == "clear":
+                temperature_override = None
+                await ctx.respond("Temperature override cleared.", ephemeral=True)
+            elif action == "show":
+                await ctx.respond(f"Current temperature: {temperature_override if temperature_override is not None else 0.3}", ephemeral=True)
+            else:
+                await ctx.respond("Unknown temperature action.", ephemeral=True)
+        elif section == "chatbot":
+            if action == "stop":
+                try:
+                    GLaDOS_active_conversations[ctx.channel.id] = datetime.now() - CONVERSATION_TIMEOUT
+                    await ctx.respond("GLaDOS speech module shut down", ephemeral=True)
+                except Exception as e:
+                    await ctx.respond("Something went wrong", ephemeral=True)
+        else:
+            await ctx.respond("Unknown section.", ephemeral=True)
+    except Exception as e:
+        print("debug error:", e)
+        await ctx.respond("Debug command failed.", ephemeral=True)
 
 @client.bridge_command(description = "Ping, Pong!")
 async def ping(ctx):
