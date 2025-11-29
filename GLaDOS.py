@@ -83,6 +83,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     global call_begin_time, call_start_message
     if before.channel != after.channel and logchannel:
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
+        print(f"{member} Went from {before.channel} to {after.channel}  {datetime.now()} EST")
     if member.name == "bisector" and before.channel is None and after.channel == voicechannel and len(voicechannel.members) == 1 and genchat:
         await genchat.send(f"{member.name} is a dingus")
     if after.channel == guestchannel and guestrole not in member.roles:
@@ -95,6 +96,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         if callchat and member_role:
             await callchat.set_permissions(member_role, read_messages=True)
         if genchat:
+            print(f"{member} started a call")
             call_start_message = await genchat.send(f"{member.name} has started a call")
         if callchat:
             await callchat.send(f"@everyone {member.name} has started a call")
@@ -148,6 +150,7 @@ async def on_message(message: discord.Message):
 @client.hybrid_command(name="ping", description="Ping Pong")
 async def ping(ctx: commands.Context):
     ms = int(client.latency * 1000)
+    print(f"Pong!")
     await ctx.reply(f"Pong {ms}ms")
 
 # Ring (slash + prefix)
@@ -185,6 +188,7 @@ async def ring(ctx: commands.Context, member: discord.Member):
     try:
         # Only the caller sees this (like before)
         ack = f"Ringing {member.display_name}"
+        print(ack)
         if ctx.interaction:
             await ctx.interaction.response.send_message(ack, ephemeral=True)
         else:
@@ -220,6 +224,7 @@ async def ringall(ctx: commands.Context):
             await ctx.reply("Join voice first.")
         return
     try:
+        print("Ringing All")
         if ctx.interaction:
             await ctx.interaction.response.send_message("Ringing all", ephemeral=True)
         else:
@@ -322,6 +327,7 @@ async def debug_command(interaction: discord.Interaction,
         await interaction.followup.send("Debug failed.")
 
 async def glados_response(message: discord.Message, history, now, channel_id):
+    print("person says:", message.content)
     prompt = prompt_override if prompt_override else DEFAULT_PROMPT
     if prompt_append:
         prompt += " " + prompt_append
@@ -343,6 +349,7 @@ async def glados_response(message: discord.Message, history, now, channel_id):
     if "(Nothing)" in output:
         return
     await message.channel.send(output)
+    print("glados:", output)
     GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
 
 # Logging events
