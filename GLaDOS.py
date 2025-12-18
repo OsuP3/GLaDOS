@@ -52,7 +52,7 @@ class GLaDOSBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.token = os.getenv("DISCORD_API_TOKEN")
-        self.last_command_time = time.time()
+        self.last_command_time = 0
 
 client = GLaDOSBot()
 openai_client = OpenAI(api_key=openai_api_key)
@@ -117,7 +117,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         event_guild = before.channel.guild
     elif after.channel is not None:
         event_guild = after.channel.guild
-    if event_guild != guild:
+    if event_guild != guild: # TODO: Theres no way this scales very well
         return
     global call_begin_time, call_start_message
     if before.channel != after.channel and logchannel:
