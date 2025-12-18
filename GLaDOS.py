@@ -112,6 +112,8 @@ async def sync_commands(ctx):
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if after.channel.guild != guild and before.channel.guild != guild:
+        return
     global call_begin_time, call_start_message
     if before.channel != after.channel and logchannel:
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
@@ -154,7 +156,7 @@ def format_message_with_attachments(msg: discord.Message):
 
 @client.event
 async def on_message(message: discord.Message):
-    if message.author == client.user:
+    if message.guild != guild or message.author == client.user:
         return
     hist = channel_histories.setdefault(message.channel.id, [])
     hist.append({"role": "user", "content": message.content})
@@ -181,6 +183,8 @@ async def on_message(message: discord.Message):
 # Hybrid ping (slash + prefix)
 @client.hybrid_command(name="ping", description="Ping Pong")
 async def ping(ctx: commands.Context):
+    if ctx.guild != guild:
+        return
     ms = int(client.latency * 1000)
     print(f"Pong!")
     await ctx.reply(f"Pong {ms}ms")
@@ -189,6 +193,8 @@ async def ping(ctx: commands.Context):
 @client.hybrid_command(name="ring", description="Ring a friend")
 @commands.cooldown(1, 30, commands.BucketType.default)
 async def ring(ctx: commands.Context, member: discord.Member):
+    if ctx.guild != guild:
+        return
     # Channels must be set
     if genchat is None or callchat is None:
         msg = "Config error: genchat/callchat not set."
@@ -218,7 +224,7 @@ async def ring(ctx: commands.Context, member: discord.Member):
         return
 
     try:
-        # Only the caller sees this (like before)
+        # Only the caller sees this
         ack = f"Ringing {member.display_name}"
         print(ack)
         if ctx.interaction:
@@ -237,12 +243,13 @@ async def ring(ctx: commands.Context, member: discord.Member):
         await callchat.set_permissions(member, view_channel=None, read_messages=None)
 
     except Exception as e:
-        # Quiet like before, but log to console
         print("Ring error:", e)
 
 @client.hybrid_command(name="ringall", description="Ring everyone role")
 @commands.cooldown(1, 120, commands.BucketType.guild)
 async def ringall(ctx: commands.Context):
+    if ctx.guild != guild:
+        return
     if ctx.channel != genchat:
         if ctx.interaction:
             await ctx.interaction.response.send_message("Wrong channel.", ephemeral=True)
@@ -284,6 +291,8 @@ async def ring_errors(ctx: commands.Context, error):
 @client.hybrid_command(name="togglepausevid", description="Pause/Unpause Osu's Video")
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def togglepausevid(ctx: commands.Context):
+    if ctx.guild != guild:
+        return
     print(f"Pause prompted") 
     # Check permissions
     if pause_role and pause_role not in ctx.author.roles:
@@ -351,6 +360,8 @@ async def debug_command(interaction: discord.Interaction,
                         section: str,
                         action: str = None,
                         value: str = None):
+    if interaction.guild != guild:
+        return
     if interaction.channel.id != int(os.getenv("DEBUGCHANNEL_ID")) and not (section == "chatbot" and action == "stop"):
         await interaction.response.send_message("Wrong channel.", ephemeral=True)
         return
@@ -451,7 +462,7 @@ async def glados_response(message: discord.Message, history, now, channel_id):
 # Logging events
 @client.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
-    if not logchannel or before.channel == logchannel:
+    if before.guild != guild or not logchannel or before.channel == logchannel:
         return
     b = format_message_with_attachments(before)
     a = format_message_with_attachments(after)
@@ -459,13 +470,13 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
 
 @client.event
 async def on_message_delete(message: discord.Message):
-    if not logchannel or message.channel == logchannel:
+    if message.guild != guild or not logchannel or message.channel == logchannel:
         return
     await logchannel.send(f"DELETE {message.channel}/{message.author}: {format_message_with_attachments(message)}")
 
 @client.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
-    if not datalogchannel:
+    if payload.guild_id != int(os.getenv("GUILD_ID")) or not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
     if ch in (logchannel, datalogchannel):
@@ -478,7 +489,7 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
 
 @client.event
 async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
-    if not datalogchannel:
+    if payload.guild_id != int(os.getenv("GUILD_ID")) or not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
     if ch in (logchannel, datalogchannel):
