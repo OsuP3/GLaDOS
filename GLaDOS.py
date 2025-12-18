@@ -12,7 +12,7 @@ load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 GPT_MODEL = "gpt-4-turbo"
 
-from GLaDOS_help import *  # (kept)
+from GLaDOS_help import *
 
 GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
 CONVERSATION_TIMEOUT = timedelta(minutes=2)
@@ -112,7 +112,12 @@ async def sync_commands(ctx):
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    if after.channel.guild != guild and before.channel.guild != guild:
+    event_guild = None
+    if before.channel is not None:
+        event_guild = before.channel.guild
+    elif after.channel is not None:
+        event_guild = after.channel.guild
+    if event_guild != guild:
         return
     global call_begin_time, call_start_message
     if before.channel != after.channel and logchannel:
@@ -354,7 +359,6 @@ async def togglepausevid_error(ctx: commands.Context, error):
     else:
         print("togglepausevid error:", error)
 
-# Single /debug slash command
 @client.tree.command(name="debug", description="Debug control")
 async def debug_command(interaction: discord.Interaction,
                         section: str,
