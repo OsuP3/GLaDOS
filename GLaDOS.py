@@ -161,13 +161,11 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             timeout_seconds = 60 # Guests have a minute after leaving to keep access
             for i in range(0, timeout_seconds):
                 await asyncio.sleep(1)
-                print(i)
                 # User rejoins in time
                 if guest_access_timer.get(member.name, False) == False:
                     break
             else:
                 # Timer runs out, user loses perms
-                print("6")
                 await voicechannel.set_permissions(member, connect=None, view_channel=None)
                 guest_access_timer[member.name] = False
                 guest_has_vc_access[member.name] = False
