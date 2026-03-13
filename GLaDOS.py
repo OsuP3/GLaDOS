@@ -17,6 +17,8 @@ from GLaDOS_help import *  # (kept)
 GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
 CONVERSATION_TIMEOUT = timedelta(minutes=2)
 channel_histories = {}                    # channel_id -> list[{"role","content"}]
+guest_has_vc_access = {}
+guest_access_timer = {}
 
 DEFAULT_PROMPT = (
     "You are GLaDOS from Portal. "
@@ -46,6 +48,7 @@ voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = m
 call_begin_time = None
 call_start_message = None
 
+
 class GLaDOSBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
@@ -58,7 +61,7 @@ client = GLaDOSBot()
 openai_client = OpenAI(api_key=openai_api_key)
 
 @client.event
-async def on_ready():
+async def on_ready() -> None:
     global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel
     global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel
     guild          = client.get_guild(int(os.getenv("GUILD_ID")))
@@ -89,7 +92,7 @@ async def on_ready():
     print(f"{client.user} is now running")
 
 @client.command(name="sync")
-async def sync_commands(ctx):
+async def sync_commands(ctx) -> None:
     # Manual sync command to fix "command not found" issues
     # Checks if user has administrator permissions or is the host
     is_admin = ctx.author.guild_permissions.administrator
@@ -111,18 +114,23 @@ async def sync_commands(ctx):
         await ctx.send("You are not authorized to sync commands.")
 
 @client.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
     global call_begin_time, call_start_message
+    # Log movement
     if before.channel != after.channel and logchannel:
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
         print(f"{member} Went from {before.channel} to {after.channel}  {datetime.now()} EST")
-    if member.name == "bisector" and before.channel is None and after.channel == voicechannel and len(voicechannel.members) == 1 and genchat:
+
+    # Bisector doing bisector things
+    if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and genchat:
         await genchat.send(f"{member.name} is a dingus")
+    # Naughty member
     if after.channel == guestchannel and guestrole not in member.roles:
         if logchannel:
             await logchannel.send(f"VOICE: {member} tried joining guestchannel")
         await member.move_to(None)
-    elif (before.channel is None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+    # Call started
+    elif ((member_role in member.roles) and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
         client.last_command_time = time.time()
         call_begin_time = client.last_command_time
         if callchat and member_role:
@@ -134,13 +142,47 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             await callchat.send(f"@everyone {member.name} has started a call")
             await asyncio.sleep(30)
             await callchat.set_permissions(member_role, read_messages=False)
-    elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time is not None and call_start_message):
+    # Temp access for guests
+    elif (guestrole in member.roles):
+        if (before.channel != voicechannel and after.channel == voicechannel):
+            # Joins voicechannel, timer stopped and guest is granted access if they dont already have
+            print(guest_has_vc_access.get(member.name, False))
+            if (guest_has_vc_access.get(member.name, False) == False):
+                # Member was just dragged, give them permissions
+                if logchannel:
+                    await logchannel.send(f"VOICE: guest {member} has gained vc access ")
+                await voicechannel.set_permissions(member, view_channel=True, connect=True)
+                guest_has_vc_access[member.name] = True
+            guest_access_timer[member.name] = False
+
+        elif (guest_access_timer.get(member.name, False) == False and before.channel == voicechannel and after.channel != voicechannel):
+            # Guest left, and does not currently have a countdown running, start their timer
+            guest_access_timer[member.name] = True
+            timeout_seconds = 60 # Guests have a minute after leaving to keep access
+            for i in range(0, timeout_seconds):
+                await asyncio.sleep(1)
+                print(i)
+                # User rejoins in time
+                if guest_access_timer.get(member.name, False) == False:
+                    break
+            else:
+                # Timer runs out, user loses perms
+                print("6")
+                await voicechannel.set_permissions(member, connect=None, view_channel=None)
+                guest_access_timer[member.name] = False
+                guest_has_vc_access[member.name] = False
+                if logchannel:
+                    await logchannel.send(f"VOICE: guest {member} has lost vc access ")
+
+
+    # Call ended
+    elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time != None and call_start_message):
         duration = time.time() - call_begin_time
         msg = duration_msg(duration)
         await call_start_message.edit(content=f"{call_start_message.content[:-19]} started a call that lasted {msg}")
         call_begin_time = None
 
-def format_message_with_attachments(msg: discord.Message):
+def format_message_with_attachments(msg: discord.Message) -> str:
     parts = []
     if msg.content:
         parts.append(msg.content)
@@ -153,7 +195,7 @@ def format_message_with_attachments(msg: discord.Message):
     return "\n".join(parts) if parts else "(no content)"
 
 @client.event
-async def on_message(message: discord.Message):
+async def on_message(message: discord.Message) -> None:
     if message.author == client.user:
         return
     hist = channel_histories.setdefault(message.channel.id, [])
@@ -180,7 +222,7 @@ async def on_message(message: discord.Message):
 
 # Hybrid ping (slash + prefix)
 @client.hybrid_command(name="ping", description="Ping Pong")
-async def ping(ctx: commands.Context):
+async def ping(ctx: commands.Context) -> None:
     ms = int(client.latency * 1000)
     print(f"Pong!")
     await ctx.reply(f"Pong {ms}ms")
@@ -188,9 +230,9 @@ async def ping(ctx: commands.Context):
 # Ring (slash + prefix)
 @client.hybrid_command(name="ring", description="Ring a friend")
 @commands.cooldown(1, 30, commands.BucketType.default)
-async def ring(ctx: commands.Context, member: discord.Member):
+async def ring(ctx: commands.Context, member: discord.Member) -> None:
     # Channels must be set
-    if genchat is None or callchat is None:
+    if genchat == None or callchat == None:
         msg = "Config error: genchat/callchat not set."
         if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
         else: await ctx.reply(msg)
@@ -204,14 +246,14 @@ async def ring(ctx: commands.Context, member: discord.Member):
         return
 
     # Caller must be in voice
-    if ctx.author.voice is None:
+    if ctx.author.voice == None:
         msg = "You need to be in a voice channel to ring someone."
         if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
         else: await ctx.reply(msg)
         return
 
     # Target must not be in voice
-    if member.voice is not None:
+    if member.voice != None:
         msg = f"{member.display_name} is already in a voice channel."
         if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
         else: await ctx.reply(msg)
@@ -242,14 +284,14 @@ async def ring(ctx: commands.Context, member: discord.Member):
 
 @client.hybrid_command(name="ringall", description="Ring everyone role")
 @commands.cooldown(1, 120, commands.BucketType.guild)
-async def ringall(ctx: commands.Context):
+async def ringall(ctx: commands.Context) -> None:
     if ctx.channel != genchat:
         if ctx.interaction:
             await ctx.interaction.response.send_message("Wrong channel.", ephemeral=True)
         else:
             await ctx.reply("Wrong channel.")
         return
-    if ctx.author.voice is None:
+    if ctx.author.voice == None:
         if ctx.interaction:
             await ctx.interaction.response.send_message("Join voice first.", ephemeral=True)
         else:
@@ -271,7 +313,7 @@ async def ringall(ctx: commands.Context):
 
 @ring.error
 @ringall.error
-async def ring_errors(ctx: commands.Context, error):
+async def ring_errors(ctx: commands.Context, error) -> None:
     if isinstance(error, commands.CommandOnCooldown):
         retry = f"{error.retry_after:.0f}"
         if ctx.interaction:
@@ -283,7 +325,7 @@ async def ring_errors(ctx: commands.Context, error):
 
 @client.hybrid_command(name="togglepausevid", description="Pause/Unpause Osu's Video")
 @commands.cooldown(1, 5, commands.BucketType.user)
-async def togglepausevid(ctx: commands.Context):
+async def togglepausevid(ctx: commands.Context) -> None:
     print(f"Pause prompted") 
     # Check permissions
     if pause_role and pause_role not in ctx.author.roles:
@@ -336,7 +378,7 @@ async def togglepausevid(ctx: commands.Context):
         else: await ctx.reply(err_msg)
 
 @togglepausevid.error
-async def togglepausevid_error(ctx: commands.Context, error):
+async def togglepausevid_error(ctx: commands.Context, error) -> None:
     if isinstance(error, commands.CommandOnCooldown):
         retry = f"{error.retry_after:.1f}"
         msg = f"Cooldown {retry}s"
@@ -350,7 +392,7 @@ async def togglepausevid_error(ctx: commands.Context, error):
 async def debug_command(interaction: discord.Interaction,
                         section: str,
                         action: str = None,
-                        value: str = None):
+                        value: str = None) -> None:
     if interaction.channel.id != int(os.getenv("DEBUGCHANNEL_ID")) and not (section == "chatbot" and action == "stop"):
         await interaction.response.send_message("Wrong channel.", ephemeral=True)
         return
@@ -407,7 +449,7 @@ async def debug_command(interaction: discord.Interaction,
                 temperature_override = None
                 await interaction.followup.send("Temperature cleared.")
             elif action == "show":
-                await interaction.followup.send(f"Temperature: {temperature_override if temperature_override is not None else 0.3}")
+                await interaction.followup.send(f"Temperature: {temperature_override if temperature_override != None else 0.3}")
             else:
                 await interaction.followup.send("Unknown temperature action.")
         elif section == "chatbot":
@@ -422,12 +464,12 @@ async def debug_command(interaction: discord.Interaction,
         print("debug error:", e)
         await interaction.followup.send("Debug failed.")
 
-async def glados_response(message: discord.Message, history, now, channel_id):
+async def glados_response(message: discord.Message, history, now, channel_id) -> None:
     print("person says:", message.content)
     prompt = prompt_override if prompt_override else DEFAULT_PROMPT
     if prompt_append:
         prompt += " " + prompt_append
-    temp = temperature_override if temperature_override is not None else 0.3
+    temp = temperature_override if temperature_override != None else 0.3
     messages = [{"role": "system", "content": prompt}] + history
     try:
         resp = openai_client.chat.completions.create(
@@ -450,7 +492,7 @@ async def glados_response(message: discord.Message, history, now, channel_id):
 
 # Logging events
 @client.event
-async def on_message_edit(before: discord.Message, after: discord.Message):
+async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
     if not logchannel or before.channel == logchannel:
         return
     b = format_message_with_attachments(before)
@@ -458,13 +500,13 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     await logchannel.send(f"EDIT {before.channel}/{before.author}\nFROM: {b}\nTO: {a}")
 
 @client.event
-async def on_message_delete(message: discord.Message):
+async def on_message_delete(message: discord.Message) -> None:
     if not logchannel or message.channel == logchannel:
         return
     await logchannel.send(f"DELETE {message.channel}/{message.author}: {format_message_with_attachments(message)}")
 
 @client.event
-async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
     if not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
@@ -477,7 +519,7 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     await datalogchannel.send(f"RAW DELETE {payload.message_id} / {ch}: {txt}")
 
 @client.event
-async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
+async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
     if not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
@@ -489,7 +531,7 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
         txt = "(uncached)"
     await datalogchannel.send(f"RAW EDIT {payload.message_id} / {ch}: {txt}")
 
-async def main():
+async def main() -> None:
     print("bot starting")
     await client.start(client.token)
 
