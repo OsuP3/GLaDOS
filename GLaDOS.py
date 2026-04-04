@@ -1,9 +1,10 @@
 import os
 import asyncio
 import time
+import random
 from datetime import datetime, timedelta
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from openai import OpenAI
 import requests
@@ -60,23 +61,61 @@ class GLaDOSBot(commands.Bot):
 client = GLaDOSBot()
 openai_client = OpenAI(api_key=openai_api_key)
 
+# default order and color assignments
+# saga(71368a), skira(ce0e24), bop(f0ed52), tori(e9cadc), ari(000001), gab(9b59b6), yeyo(3061e3), osu(33cc99), glados(401901), bisector(95a7ff), milk(dcdcdc)
+
+async def safe_edit_role(role, color = None, nick = None):
+    for _ in range(3):  # try up to 3 times
+        try:
+            if color:
+                await role.edit(color=color)
+            if nick:
+                for member in role.members:
+                    await member.edit(nick=nick)    
+            return
+        except discord.HTTPException as e:
+            print(f"Edit failed ({e}), retrying in 5s...")
+            await asyncio.sleep(5)
+
+unique_member_roles = None
+
+@tasks.loop(minutes=15)
+async def my_task():
+    global unique_member_roles
+    # print("scramble!") 
+    # Switch colors around
+    colorlist  = [0x71368a, 0xce0e24, 0xf0ed52, 0xe9cadc, 0x000001, 0x9b59b6, 0x3061e3, 0x33cc99, 0x401901, 0x95a7ff, 0xdcdcdc] # default configuration
+    colornames = ["Cyan", "Black", "Green", "Pink", "Brown", "Orange", "Periwinkle Purple", "Purple", "Red", "White", "Yellow"]
+    for member_role in unique_member_roles:
+        await safe_edit_role(member_role, color=discord.Color(colorlist.pop(random.randint(0, len(colorlist)-1))))
+        if member_role.name != "osu":
+            await safe_edit_role(member_role, nick=colornames.pop(random.randint(0, len(colornames)-1)))
+    # print("scrambled!")
+
+@my_task.error
+async def my_task_error(error):
+    print("Task error:", error)
+
 @client.event
 async def on_ready() -> None:
     global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel
-    global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel
-    guild          = client.get_guild(int(os.getenv("GUILD_ID")))
-    debugchannel   = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
-    voicechannel   = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
-    guestchannel   = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
-    genchat        = client.get_channel(int(os.getenv("GENCHAT_ID")))
-    callchat       = client.get_channel(int(os.getenv("CALLCHAT_ID")))
-    logchannel     = client.get_channel(int(os.getenv("LOGCHANNEL_ID")))
-    member_role    = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
-    guestrole      = guild.get_role(int(os.getenv("GUESTROLE_ID")))
-    debugrole      = guild.get_role(int(os.getenv("DEBUGROLE_ID")))
-    pause_role     = guild.get_role(int(os.getenv("PAUSE_ROLE_ID")))
-    datalogchannel = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
-    remotechannel  = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
+    global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel, unique_member_roles
+    print("0")    
+    guild               = client.get_guild(int(os.getenv("GUILD_ID")))
+    unique_member_roles = [guild.get_role(int(unique_id)) for unique_id in os.getenv("UNIQUE_ROLE_IDS").split(",")]
+    print("1")
+    debugchannel        = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
+    voicechannel        = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
+    guestchannel        = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
+    genchat             = client.get_channel(int(os.getenv("GENCHAT_ID")))
+    callchat            = client.get_channel(int(os.getenv("CALLCHAT_ID")))
+    logchannel          = client.get_channel(int(os.getenv("LOGCHANNEL_ID")))
+    member_role         = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
+    guestrole           = guild.get_role(int(os.getenv("GUESTROLE_ID")))
+    debugrole           = guild.get_role(int(os.getenv("DEBUGROLE_ID")))
+    pause_role          = guild.get_role(int(os.getenv("PAUSE_ROLE_ID")))
+    datalogchannel      = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
+    remotechannel       = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
     try:
         if guild:
             # Sync to the specific guild for immediate updates
@@ -89,6 +128,8 @@ async def on_ready() -> None:
             print("Synced commands globally")
     except Exception as e:
         print("Slash sync error:", e)
+    print("2")
+    my_task.start()
     print(f"{client.user} is now running")
 
 @client.command(name="sync")
