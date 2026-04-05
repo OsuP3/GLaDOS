@@ -43,8 +43,6 @@ DEFAULT_PROMPT = (
 prompt_override = None
 prompt_append = ""
 temperature_override = None
-
-# Globals populated in on_ready
 voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = pause_role = None
 call_begin_time = None
 call_start_message = None
@@ -61,49 +59,12 @@ class GLaDOSBot(commands.Bot):
 client = GLaDOSBot()
 openai_client = OpenAI(api_key=openai_api_key)
 
-# default order and color assignments
-# saga(71368a), skira(ce0e24), bop(f0ed52), tori(e9cadc), ari(000001), gab(9b59b6), yeyo(3061e3), osu(33cc99), glados(401901), bisector(95a7ff), milk(dcdcdc)
-
-async def safe_edit_role(role, color = None, nick = None):
-    for _ in range(3):  # try up to 3 times
-        try:
-            if color:
-                await role.edit(color=color)
-            if nick:
-                for member in role.members:
-                    await member.edit(nick=nick)    
-            return
-        except discord.HTTPException as e:
-            print(f"Edit failed ({e}), retrying in 5s...")
-            await asyncio.sleep(5)
-
-unique_member_roles = None
-
-@tasks.loop(minutes=15)
-async def my_task():
-    global unique_member_roles
-    # print("scramble!") 
-    # Switch colors around
-    colorlist  = [0x71368a, 0xce0e24, 0xf0ed52, 0xe9cadc, 0x000001, 0x9b59b6, 0x3061e3, 0x33cc99, 0x401901, 0x95a7ff, 0xdcdcdc] # default configuration
-    colornames = ["Cyan", "Black", "Green", "Pink", "Brown", "Orange", "Periwinkle Purple", "Purple", "Red", "White", "Yellow"]
-    for member_role in unique_member_roles:
-        await safe_edit_role(member_role, color=discord.Color(colorlist.pop(random.randint(0, len(colorlist)-1))))
-        if member_role.name != "osu":
-            await safe_edit_role(member_role, nick=colornames.pop(random.randint(0, len(colornames)-1)))
-    # print("scrambled!")
-
-@my_task.error
-async def my_task_error(error):
-    print("Task error:", error)
-
 @client.event
 async def on_ready() -> None:
     global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel
     global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel, unique_member_roles
-    print("0")    
     guild               = client.get_guild(int(os.getenv("GUILD_ID")))
     unique_member_roles = [guild.get_role(int(unique_id)) for unique_id in os.getenv("UNIQUE_ROLE_IDS").split(",")]
-    print("1")
     debugchannel        = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
     voicechannel        = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
     guestchannel        = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
@@ -128,8 +89,6 @@ async def on_ready() -> None:
             print("Synced commands globally")
     except Exception as e:
         print("Slash sync error:", e)
-    print("2")
-    my_task.start()
     print(f"{client.user} is now running")
 
 @client.command(name="sync")
@@ -139,7 +98,7 @@ async def sync_commands(ctx) -> None:
     is_admin = ctx.author.guild_permissions.administrator
     host_id = os.getenv("HOST_ID")
     is_host = host_id and str(ctx.author.id) == str(host_id)
-    
+
     if is_admin or is_host:
         msg = await ctx.send("Syncing commands...")
         try:
@@ -153,6 +112,11 @@ async def sync_commands(ctx) -> None:
             await msg.edit(content=f"Sync failed: {e}")
     else:
         await ctx.send("You are not authorized to sync commands.")
+
+###################################################################################################
+#                                   EVENT HANDLING BELOW                                          #
+#                                                                                                 #
+###################################################################################################
 
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
@@ -259,6 +223,10 @@ async def on_message(message: discord.Message) -> None:
     if ("glados" in message.content.lower()) or (active_until and now < active_until):
         await glados_response(message, channel_histories[message.channel.id], now, message.channel.id)
 
+###################################################################################################
+#                                   BOT COMMANDS BELOW                                            #
+#                                                                                                 #
+###################################################################################################
 # Hybrid ping (slash + prefix)
 @client.hybrid_command(name="ping", description="Ping Pong")
 async def ping(ctx: commands.Context) -> None:
@@ -318,7 +286,7 @@ async def ring(ctx: commands.Context, member: discord.Member) -> None:
         await callchat.set_permissions(member, view_channel=None, read_messages=None)
 
     except Exception as e:
-        # Quiet like before, but log to console
+
         print("Ring error:", e)
 
 @client.hybrid_command(name="ringall", description="Ring everyone role")
@@ -362,10 +330,56 @@ async def ring_errors(ctx: commands.Context, error) -> None:
     else:
         print("ring command error:", error)
 
+
+# default order and color assignments
+# saga(71368a), skira(ce0e24), bop(f0ed52), tori(e9cadc), ari(000001), gab(9b59b6), yeyo(3061e3), osu(33cc99), glados(401901), bisector(95a7ff), milk(dcdcdc)
+
+async def safe_edit_role(role, color = None, nick = None):
+    for _ in range(3):  # try up to 3 times
+        try:
+            if color:
+                await role.edit(color=color)
+            if nick:
+                for member in role.members:
+                    await member.edit(nick=nick)
+            return
+        except discord.HTTPException as e:
+            print(f"Edit failed ({e}), retrying in 5s...")
+            await asyncio.sleep(5)
+
+unique_member_roles = None
+
+@client.hybrid_command(name="scramble", description="Scramble!")
+@commands.cooldown(1, 30, commands.BucketType.guild)
+async def scramble(ctx: commands.Context):
+    global unique_member_roles
+    # Switch colors around
+    await ctx.interaction.response.send_message("Scrambling!", ephemeral=True)
+    colorlist  = [0x71368a, 0xce0e24, 0xf0ed52, 0xe9cadc, 0x000001, 0x9b59b6, 0x3061e3, 0x33cc99, 0x401901, 0x95a7ff, 0xdcdcdc] # default configuration
+    colornames = ["Cyan", "Black", "Green", "Pink", "Brown", "Orange", "Periwinkle Purple", "Purple", "Red", "White", "Yellow"]
+    for member_role in unique_member_roles:
+        await safe_edit_role(member_role, color=discord.Color(colorlist.pop(random.randint(0, len(colorlist)-1))))
+        if member_role.name != "osu":
+            await safe_edit_role(member_role, nick=colornames.pop(random.randint(0, len(colornames)-1)))
+    # print("scrambled!")
+    await ctx.interaction.edit_original_response(content="Scrambled!")
+    return
+
+@scramble.error
+async def scramble_error(ctx: commands.Context, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        retry = f"{error.retry_after:.1f}"
+        msg = f"Cooldown {retry}s"
+        if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
+        else: await ctx.reply(msg)
+    else:
+        print("Scramble error:", error)
+
+
 @client.hybrid_command(name="togglepausevid", description="Pause/Unpause Osu's Video")
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def togglepausevid(ctx: commands.Context) -> None:
-    print(f"Pause prompted") 
+    print(f"Pause prompted")
     # Check permissions
     if pause_role and pause_role not in ctx.author.roles:
         msg = "You don't have permission to use this command."
@@ -401,13 +415,13 @@ async def togglepausevid(ctx: commands.Context) -> None:
         flag_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media_toggle_request.flag")
         with open(flag_path, "w") as f:
             f.write(str(time.time()))
-        
+
         print(f"Flag created at: {flag_path}") # Debug print
-        
+
         msg = " **Media toggle triggered!**"
         if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
         else: await ctx.reply(msg)
-        
+
         if logchannel:
             await logchannel.send(f"PAUSE: {ctx.author} used togglepausevid command")
 
@@ -426,6 +440,10 @@ async def togglepausevid_error(ctx: commands.Context, error) -> None:
     else:
         print("togglepausevid error:", error)
 
+###################################################################################################
+#                                  DEBUG COMMANDS BELOW                                           #
+#                                                                                                 #
+###################################################################################################
 # Single /debug slash command
 @client.tree.command(name="debug", description="Debug control")
 async def debug_command(interaction: discord.Interaction,
@@ -438,7 +456,10 @@ async def debug_command(interaction: discord.Interaction,
     global call_begin_time, call_start_message, prompt_override, prompt_append, temperature_override
     await interaction.response.defer(ephemeral=True)
     try:
-        if section == "resetcooldown":
+        if section == "scramble":
+            if action == "off":
+                pass
+        elif section == "resetcooldown":
             client.last_command_time = 0
             await interaction.followup.send("Cooldown reset.")
         elif section == "call_start":
@@ -461,7 +482,7 @@ async def debug_command(interaction: discord.Interaction,
                     await interaction.followup.send("Need value.")
             elif action == "append":
                 if value:
-                    prompt_append = value
+                    prompt_append += value
                     await interaction.followup.send("Append set.")
                 else:
                     await interaction.followup.send("Need value.")
@@ -529,6 +550,11 @@ async def glados_response(message: discord.Message, history, now, channel_id) ->
     print("glados:", output)
     GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
 
+
+###################################################################################################
+#                                   MESSAGE EVENT HANDLING BELOW                                  #
+#                                                                                                 #
+###################################################################################################
 # Logging events
 @client.event
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
@@ -569,6 +595,11 @@ async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
     else:
         txt = "(uncached)"
     await datalogchannel.send(f"RAW EDIT {payload.message_id} / {ch}: {txt}")
+
+###################################################################################################
+#                                           MAIN                                                  #
+#                                                                                                 #
+###################################################################################################
 
 async def main() -> None:
     print("bot starting")
