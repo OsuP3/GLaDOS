@@ -8,19 +8,14 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from openai import OpenAI
 import requests
+from glados_help import *
 
+# Load env
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 GPT_MODEL = "gpt-4-turbo"
 
-from glados_help import *
-
-GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
-CONVERSATION_TIMEOUT = timedelta(minutes=2)
-channel_histories = {}                    # channel_id -> list[{"role","content"}]
-guest_has_vc_access = {}
-guest_access_timer = {}
-
+# Chatbot config
 DEFAULT_PROMPT = (
     "You are GLaDOS from Portal. "
     "Only reply if you are being addressed or if it is clear from the conversation that the user is talking to you. "
@@ -39,14 +34,22 @@ DEFAULT_PROMPT = (
     "If someone says something that is outside of openai terms of service, like someone saying they will kill themselves, say nothing. "
     "Make your message's length match the length of the message you're responding to. "
 )
-
-prompt_override = None
-prompt_append = ""
+CONVERSATION_TIMEOUT = timedelta(minutes=2)
+prompt_append        = ""
+prompt_override      = None
 temperature_override = None
-voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = pause_role = None
-call_begin_time = None
-call_start_message = None
 
+# Set up dictionaries
+GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
+channel_histories           = {}          # channel_id -> list[{"role","content"}]
+guest_has_vc_access         = {}
+guest_access_timer          = {}
+
+# Server variables
+voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = pause_role = None
+call_begin_time     = None
+call_start_message  = None
+unique_member_roles = None
 
 class GLaDOSBot(commands.Bot):
     def __init__(self):
@@ -121,6 +124,7 @@ async def sync_commands(ctx) -> None:
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
     global call_begin_time, call_start_message
+
     # Log movement
     if before.channel != after.channel and logchannel:
         await logchannel.send(f"VOICE: {member} Went from {before.channel} to {after.channel}")
@@ -129,13 +133,17 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     # Bisector doing bisector things
     if member.name == "bisector" and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and genchat:
         await genchat.send(f"{member.name} is a dingus")
+
     # Naughty member
     if after.channel == guestchannel and guestrole not in member.roles:
         if logchannel:
             await logchannel.send(f"VOICE: {member} tried joining guestchannel")
         await member.move_to(None)
+
     # Call started
-    elif ((member_role in member.roles) and before.channel == None and after.channel == voicechannel and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+    elif ((member_role in member.roles) and before.channel == None and after.channel == voicechannel \
+            and len(voicechannel.members) == 1 and ((time.time() - client.last_command_time) > 30)):
+        # Set cooldown
         client.last_command_time = time.time()
         call_begin_time = client.last_command_time
         if callchat and member_role:
@@ -147,6 +155,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             await callchat.send(f"@everyone {member.name} has started a call")
             await asyncio.sleep(30)
             await callchat.set_permissions(member_role, read_messages=False)
+
     # Temp access for guests
     elif (guestrole in member.roles):
         if (before.channel != voicechannel and after.channel == voicechannel):
@@ -177,7 +186,6 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 if logchannel:
                     await logchannel.send(f"VOICE: guest {member} has lost vc access ")
 
-
     # Call ended
     elif (before.channel == voicechannel and len(voicechannel.members) == 0 and call_begin_time != None and call_start_message):
         duration = time.time() - call_begin_time
@@ -199,13 +207,17 @@ def format_message_with_attachments(msg: discord.Message) -> str:
 
 @client.event
 async def on_message(message: discord.Message) -> None:
+    # Dont handle bot's own messages
     if message.author == client.user:
         return
+
+    # Save last 10 messages (for chatbot memory)
     hist = channel_histories.setdefault(message.channel.id, [])
     hist.append({"role": "user", "content": message.content})
     if len(hist) > 10:
         channel_histories[message.channel.id] = hist[-10:]
 
+    # Bot chat remote control
     if message.channel == remotechannel and genchat:
         files = []
         for att in message.attachments:
@@ -215,9 +227,11 @@ async def on_message(message: discord.Message) -> None:
                 pass
         await genchat.send(message.content or "", files=files)
 
+    # Basic message log
     if logchannel and datalogchannel and message.channel not in (logchannel, datalogchannel):
         await logchannel.send(f"TEXT/ID:{message.id}/ {message.channel}/{message.author}: {format_message_with_attachments(message)}")
 
+    # Handle chatbot conversation if applicable
     now = datetime.now()
     active_until = GLaDOS_active_conversations.get(message.channel.id)
     if ("glados" in message.content.lower()) or (active_until and now < active_until):
@@ -227,14 +241,13 @@ async def on_message(message: discord.Message) -> None:
 #                                   BOT COMMANDS BELOW                                            #
 #                                                                                                 #
 ###################################################################################################
-# Hybrid ping (slash + prefix)
+
 @client.hybrid_command(name="ping", description="Ping Pong")
 async def ping(ctx: commands.Context) -> None:
     ms = int(client.latency * 1000)
     print(f"Pong!")
     await ctx.reply(f"Pong {ms}ms")
 
-# Ring (slash + prefix)
 @client.hybrid_command(name="ring", description="Ring a friend")
 @commands.cooldown(1, 30, commands.BucketType.default)
 async def ring(ctx: commands.Context, member: discord.Member) -> None:
@@ -267,7 +280,7 @@ async def ring(ctx: commands.Context, member: discord.Member) -> None:
         return
 
     try:
-        # Only the caller sees this (like before)
+        # Only the caller sees this
         ack = f"Ringing {member.display_name}"
         print(ack)
         if ctx.interaction:
@@ -286,18 +299,19 @@ async def ring(ctx: commands.Context, member: discord.Member) -> None:
         await callchat.set_permissions(member, view_channel=None, read_messages=None)
 
     except Exception as e:
-
         print("Ring error:", e)
 
 @client.hybrid_command(name="ringall", description="Ring everyone role")
 @commands.cooldown(1, 120, commands.BucketType.guild)
 async def ringall(ctx: commands.Context) -> None:
+    # Wrong channel
     if ctx.channel != genchat:
         if ctx.interaction:
             await ctx.interaction.response.send_message("Wrong channel.", ephemeral=True)
         else:
             await ctx.reply("Wrong channel.")
         return
+    # Caller not in voice
     if ctx.author.voice == None:
         if ctx.interaction:
             await ctx.interaction.response.send_message("Join voice first.", ephemeral=True)
@@ -347,23 +361,22 @@ async def safe_edit_role(role, color = None, nick = None):
             print(f"Edit failed ({e}), retrying in 5s...")
             await asyncio.sleep(5)
 
-unique_member_roles = None
 
 @client.hybrid_command(name="scramble", description="Scramble!")
 @commands.cooldown(1, 30, commands.BucketType.guild)
 async def scramble(ctx: commands.Context):
     global unique_member_roles
-    # Switch colors around
-    await ctx.interaction.response.send_message("Scrambling!", ephemeral=True)
     colorlist  = [0x71368a, 0xce0e24, 0xf0ed52, 0xe9cadc, 0x000001, 0x9b59b6, 0x3061e3, 0x33cc99, 0x401901, 0x95a7ff, 0xdcdcdc] # default configuration
     colornames = ["Cyan", "Black", "Green", "Pink", "Brown", "Orange", "Periwinkle Purple", "Purple", "Red", "White", "Yellow"]
+
+    await ctx.interaction.response.send_message("Scrambling!", ephemeral=True)
     for member_role in unique_member_roles:
         await safe_edit_role(member_role, color=discord.Color(colorlist.pop(random.randint(0, len(colorlist)-1))))
+
+        # Server owner cannot have their nick changes by bot
         if member_role.name != "osu":
             await safe_edit_role(member_role, nick=colornames.pop(random.randint(0, len(colornames)-1)))
-    # print("scrambled!")
     await ctx.interaction.edit_original_response(content="Scrambled!")
-    return
 
 @scramble.error
 async def scramble_error(ctx: commands.Context, error):
@@ -444,7 +457,7 @@ async def togglepausevid_error(ctx: commands.Context, error) -> None:
 #                                  DEBUG COMMANDS BELOW                                           #
 #                                                                                                 #
 ###################################################################################################
-# Single /debug slash command
+
 @client.tree.command(name="debug", description="Debug control")
 async def debug_command(interaction: discord.Interaction,
                         section: str,
