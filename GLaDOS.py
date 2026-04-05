@@ -229,7 +229,8 @@ async def on_message(message: discord.Message) -> None:
 
     # Basic message log
     if logchannel and datalogchannel and message.channel not in (logchannel, datalogchannel):
-        await logchannel.send(f"TEXT/ID:{message.id}/ {message.channel}/{message.author}: {format_message_with_attachments(message)}")
+        await logchannel.send(f"TEXT/ID:{message.id}/ {message.channel}/{message.author}: {format_message_with_attachments(message)}",
+                                allowed_mentions=discord.AllowedMentions.none())
 
     # Handle chatbot conversation if applicable
     now = datetime.now()
