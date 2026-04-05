@@ -3,7 +3,7 @@ cd /home/osu/DiscordBot/GLaDOS/my-venv
 . bin/activate
 
 cd ..
-if [ $(pgrep -f "GLaDOS.py") > 0 ]; then
+if pgrep -f "GLaDOS.py" > /dev/null; then
     echo "Glados tried starting but is already running" >> glados.log
     echo "Glados is already running"
 else
