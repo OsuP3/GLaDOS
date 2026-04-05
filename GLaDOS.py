@@ -13,7 +13,7 @@ load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 GPT_MODEL = "gpt-4-turbo"
 
-from GLaDOS_help import *  # (kept)
+from glados_help import *
 
 GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
 CONVERSATION_TIMEOUT = timedelta(minutes=2)
