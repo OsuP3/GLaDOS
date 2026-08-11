@@ -4,13 +4,59 @@ import os
 from dotenv import load_dotenv
 
 DB_NAME = "glados.db"
-def get_connection():
+def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
     return conn
 
+class ConfigCache:
+    def __init__(self, db):
+        self.db = db
+        self.channels = {}  # {guild_id: {channel_type: channel_id}}
+        self.roles = {}     # {guild_id: {role_type: role_id}}
+
+    def load_all(self):
+        """Call this once, in on_ready or setup_hook."""
+        cursor = self.db.cursor()
+
+        cursor.execute('SELECT server_id, channel_type, channel_id FROM server_channels')
+        for server_id, channel_type, channel_id in cursor.fetchall():
+            self.channels.setdefault(server_id, {})[channel_type] = channel_id
+
+        cursor.execute('SELECT server_id, role_type, role_id FROM server_roles')
+        for server_id, role_type, role_id in cursor.fetchall():
+            self.roles.setdefault(server_id, {})[role_type] = role_id
+
+    def get_channel(self, guild_id, channel_type):
+        return self.channels.get(guild_id, {}).get(channel_type)
+
+    def set_channel(self, guild_id, channel_type, channel_id):
+        # update cache
+        self.channels.setdefault(guild_id, {})[channel_type] = channel_id
+        # write through to DB
+        self.db.cursor().execute('''
+            INSERT INTO server_channels (server_id, channel_type, channel_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(server_id, channel_type) DO UPDATE SET channel_id = excluded.channel_id
+        ''', (guild_id, channel_type, channel_id))
+        self.db.commit()
+
+    def get_role(self, guild_id, role_type):
+        return self.roles.get(guild_id, {}).get(role_type)
+
+    def set_role(self, guild_id, role_type, role_id):
+        # update cache
+        self.roles.setdefault(guild_id, {})[role_type] = role_id
+        # write through to DB
+        self.db.cursor().execute('''
+            INSERT INTO server_roles (server_id, role_type, role_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(server_id, role_type) DO UPDATE SET role_id = excluded.role_id
+        ''', (guild_id, role_type, role_id))
+        self.db.commit()
+
 
 if __name__ == "__main__":
-    connect = get_connection()
+    connect = get_db_connection()
     cursor = connect.cursor()
 
     cursor.execute("PRAGMA foreign_keys = ON")
@@ -21,7 +67,6 @@ if __name__ == "__main__":
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             server_id INTEGER UNIQUE NOT NULL,
             name TEXT,
-            owner_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -54,8 +99,8 @@ if __name__ == "__main__":
         # Server (guild)
         guild_id = os.getenv("GUILD_ID")
 
-        cursor.execute("INSERT INTO servers (server_id, name, owner_id) VALUES (?, ?, ?)",
-                        (guild_id, os.getenv("GUILD_NAME"), os.getenv("HOST_ID")))
+        cursor.execute("INSERT INTO servers (server_id, name) VALUES (?, ?)",
+                        (guild_id, os.getenv("GUILD_NAME")))
         connect.commit()
 
         # Channels
@@ -87,5 +132,5 @@ if __name__ == "__main__":
         )
 
         connect.commit()
-    
+
     connect.close()

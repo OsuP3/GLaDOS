@@ -1,6 +1,7 @@
 *.flag
 bot-restart.sh
 .env.main
+.env.dev
 *.db 
 
 # Byte-compiled / optimized / DLL files

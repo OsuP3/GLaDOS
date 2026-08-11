@@ -1,14 +1,20 @@
-import os
 import asyncio
-import time
-import random
 from datetime import datetime, timedelta
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from openai import OpenAI
+import os
+import random
 import requests
+import sqlite3
+import time
+
+from glados_db import ConfigCache, get_db_connection
 from glados_help import *
+
+# Config from all the different servers
+config = ConfigCache(get_db_connection())
 
 # Load env
 load_dotenv()
@@ -45,8 +51,6 @@ channel_histories           = {}          # channel_id -> list[{"role","content"
 guest_has_vc_access         = {}
 guest_access_timer          = {}
 
-# Server variables
-voicechannel = debugchannel = guestchannel = genchat = callchat = logchannel = member_role = guestrole = debugrole = datalogchannel = remotechannel = guild = pause_role = None
 call_begin_time     = None
 call_start_message  = None
 unique_member_roles = None
@@ -64,34 +68,8 @@ openai_client = OpenAI(api_key=openai_api_key)
 
 @client.event
 async def on_ready() -> None:
-    global guild, debugchannel, voicechannel, guestchannel, genchat, callchat, logchannel
-    global member_role, guestrole, debugrole, pause_role, datalogchannel, remotechannel, unique_member_roles
-    guild               = client.get_guild(int(os.getenv("GUILD_ID")))
-    unique_member_roles = [guild.get_role(int(unique_id)) for unique_id in os.getenv("UNIQUE_ROLE_IDS").split(",")]
-    debugchannel        = client.get_channel(int(os.getenv("DEBUGCHANNEL_ID")))
-    voicechannel        = client.get_channel(int(os.getenv("VOICECHANNEL_ID")))
-    guestchannel        = client.get_channel(int(os.getenv("GUESTCHANNEL_ID")))
-    genchat             = client.get_channel(int(os.getenv("GENCHAT_ID")))
-    callchat            = client.get_channel(int(os.getenv("CALLCHAT_ID")))
-    logchannel          = client.get_channel(int(os.getenv("LOGCHANNEL_ID")))
-    member_role         = guild.get_role(int(os.getenv("MEMBER_ROLE_ID")))
-    guestrole           = guild.get_role(int(os.getenv("GUESTROLE_ID")))
-    debugrole           = guild.get_role(int(os.getenv("DEBUGROLE_ID")))
-    pause_role          = guild.get_role(int(os.getenv("PAUSE_ROLE_ID")))
-    datalogchannel      = client.get_channel(int(os.getenv("DATALOGCHANNEL_ID")))
-    remotechannel       = client.get_channel(int(os.getenv("REMOTECHANNEL_ID")))
-    try:
-        if guild:
-            # Sync to the specific guild for immediate updates
-            client.tree.copy_global_to(guild=guild)
-            await client.tree.sync(guild=guild)
-            print(f"Synced commands to guild: {guild.name} ({guild.id})")
-        else:
-            print("GUILD_ID not found or guild not cached. Syncing globally...")
-            await client.tree.sync()
-            print("Synced commands globally")
-    except Exception as e:
-        print("Slash sync error:", e)
+    config.load_all()
+    print("Config cache loaded")
     print(f"{client.user} is now running")
 
 @client.command(name="sync")
@@ -99,7 +77,7 @@ async def sync_commands(ctx) -> None:
     # Manual sync command to fix "command not found" issues
     # Checks if user has administrator permissions or is the host
     is_admin = ctx.author.guild_permissions.administrator
-    host_id = os.getenv("HOST_ID")
+    host_id = ctx.guild.owner_id
     is_host = host_id and str(ctx.author.id) == str(host_id)
 
     if is_admin or is_host:
@@ -124,6 +102,16 @@ async def sync_commands(ctx) -> None:
 @client.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
     global call_begin_time, call_start_message
+    guild = member.guild
+
+    logchannel   = client.get_channel(config.get_channel(guild.id, 'log-chat'))
+    genchat      = client.get_channel(config.get_channel(guild.id, 'general-chat'))
+    voicechannel = client.get_channel(config.get_channel(guild.id, 'main-vc'))
+    callchat     = client.get_channel(config.get_channel(guild.id, 'ringing-chat'))
+    guestchannel = client.get_channel(config.get_channel(guild.id, 'guest-vc'))
+
+    guestrole   = guild.get_role(config.get_role(guild.id, 'guest'))
+    member_role = guild.get_role(config.get_role(guild.id, 'member'))
 
     # Log movement
     if before.channel != after.channel and logchannel:
@@ -152,7 +140,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             print(f"{member} started a call")
             call_start_message = await genchat.send(f"{member.name} has started a call")
         if callchat:
-            await callchat.send(f"@everyone {member.name} has started a call")
+            await callchat.send(f"{member.name} has started a call @everyone ")
             await asyncio.sleep(30)
             await callchat.set_permissions(member_role, read_messages=False)
 
@@ -210,6 +198,16 @@ async def on_message(message: discord.Message) -> None:
     # Dont handle bot's own messages
     if message.author == client.user:
         return
+    # DMs have no guild, so no config to look up
+    if not message.guild:
+        await client.process_commands(message)
+        return
+
+    guild_id = message.guild.id
+    genchat        = client.get_channel(config.get_channel(guild_id, 'general-chat'))
+    remotechannel  = client.get_channel(config.get_channel(guild_id, 'remote-chat'))
+    logchannel     = client.get_channel(config.get_channel(guild_id, 'log-chat'))
+    datalogchannel = client.get_channel(config.get_channel(guild_id, 'datalog-chat'))
 
     # Save last 10 messages (for chatbot memory)
     hist = channel_histories.setdefault(message.channel.id, [])
@@ -238,6 +236,9 @@ async def on_message(message: discord.Message) -> None:
     if ("glados" in message.content.lower()) or (active_until and now < active_until):
         await glados_response(message, channel_histories[message.channel.id], now, message.channel.id)
 
+    # IMPORTANT: needed so hybrid/prefix commands still fire
+    await client.process_commands(message)
+
 ###################################################################################################
 #                                   BOT COMMANDS BELOW                                            #
 #                                                                                                 #
@@ -252,6 +253,13 @@ async def ping(ctx: commands.Context) -> None:
 @client.hybrid_command(name="ring", description="Ring a friend")
 @commands.cooldown(1, 30, commands.BucketType.default)
 async def ring(ctx: commands.Context, member: discord.Member) -> None:
+    guild_id = ctx.guild.id
+    genchat        = client.get_channel(config.get_channel(guild_id, 'general-chat'))
+    remotechannel  = client.get_channel(config.get_channel(guild_id, 'remote-chat'))
+    logchannel     = client.get_channel(config.get_channel(guild_id, 'log-chat'))
+    datalogchannel = client.get_channel(config.get_channel(guild_id, 'datalog-chat'))
+    callchat       = client.get_channel(config.get_channel(guild_id, 'ringing-chat'))
+
     # Channels must be set
     if genchat == None or callchat == None:
         msg = "Config error: genchat/callchat not set."
@@ -305,6 +313,16 @@ async def ring(ctx: commands.Context, member: discord.Member) -> None:
 @client.hybrid_command(name="ringall", description="Ring everyone role")
 @commands.cooldown(1, 120, commands.BucketType.guild)
 async def ringall(ctx: commands.Context) -> None:
+    guild_id = ctx.guild.id
+    genchat        = client.get_channel(config.get_channel(guild_id, 'general-chat'))
+    remotechannel  = client.get_channel(config.get_channel(guild_id, 'remote-chat'))
+    logchannel     = client.get_channel(config.get_channel(guild_id, 'log-chat'))
+    datalogchannel = client.get_channel(config.get_channel(guild_id, 'datalog-chat'))
+    callchat       = client.get_channel(config.get_channel(guild_id, 'ringing-chat'))
+
+    guestrole   = ctx.guild.get_role(config.get_role(guild_id, 'guest'))
+    member_role = ctx.guild.get_role(config.get_role(guild_id, 'member'))
+
     # Wrong channel
     if ctx.channel != genchat:
         if ctx.interaction:
@@ -366,12 +384,17 @@ async def safe_edit_role(role, color = None, nick = None):
 @client.hybrid_command(name="scramble", description="Scramble!")
 @commands.cooldown(1, 30, commands.BucketType.guild)
 async def scramble(ctx: commands.Context):
+    # NOTE: unique_member_roles is never populated anywhere in this file.
+    # This command will currently do nothing (loop over None/empty).
+    # It needs to be sourced per-guild, e.g. a new 'scramble_roles' entry
+    # in server_roles (comma-separated ids) or its own table, then loaded
+    # here via config before this loop runs.
     global unique_member_roles
     colorlist  = [0x71368a, 0xce0e24, 0xf0ed52, 0xe9cadc, 0x000001, 0x9b59b6, 0x3061e3, 0x33cc99, 0x401901, 0x95a7ff, 0xdcdcdc] # default configuration
     colornames = ["Cyan", "Black", "Green", "Pink", "Brown", "Orange", "Periwinkle Purple", "Purple", "Red", "White", "Yellow"]
 
     await ctx.interaction.response.send_message("Scrambling!", ephemeral=True)
-    for member_role in unique_member_roles:
+    for member_role in (unique_member_roles or []):
         await safe_edit_role(member_role, color=discord.Color(colorlist.pop(random.randint(0, len(colorlist)-1))))
 
         # Server owner cannot have their nick changes by bot
@@ -394,6 +417,11 @@ async def scramble_error(ctx: commands.Context, error):
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def togglepausevid(ctx: commands.Context) -> None:
     print(f"Pause prompted")
+    guild_id = ctx.guild.id
+    voicechannel = client.get_channel(config.get_channel(guild_id, 'main-vc'))
+    pause_role   = ctx.guild.get_role(config.get_role(guild_id, 'pause'))
+    logchannel   = client.get_channel(config.get_channel(guild_id, 'log-chat'))
+
     # Check permissions
     if pause_role and pause_role not in ctx.author.roles:
         msg = "You don't have permission to use this command."
@@ -411,7 +439,7 @@ async def togglepausevid(ctx: commands.Context) -> None:
     # Check host state
     host_id = os.getenv("HOST_ID")
     if host_id:
-        host_member = guild.get_member(int(host_id))
+        host_member = ctx.guild.get_member(int(host_id))
         if not host_member or not host_member.voice or host_member.voice.channel != voicechannel:
             msg = "Command only works when the host is in the voice channel."
             if ctx.interaction: await ctx.interaction.response.send_message(msg, ephemeral=True)
@@ -464,7 +492,10 @@ async def debug_command(interaction: discord.Interaction,
                         section: str,
                         action: str = None,
                         value: str = None) -> None:
-    if interaction.channel.id != int(os.getenv("DEBUGCHANNEL_ID")) and not (section == "chatbot" and action == "stop"):
+    guild_id = interaction.guild.id
+    debug_channel_id = config.get_channel(guild_id, 'debug-chat')
+
+    if interaction.channel.id != debug_channel_id and not (section == "chatbot" and action == "stop"):
         await interaction.response.send_message("Wrong channel.", ephemeral=True)
         return
     global call_begin_time, call_start_message, prompt_override, prompt_append, temperature_override
@@ -479,6 +510,7 @@ async def debug_command(interaction: discord.Interaction,
         elif section == "call_start":
             if action == "set" and value:
                 try:
+                    genchat = client.get_channel(config.get_channel(guild_id, 'general-chat'))
                     msg = await genchat.fetch_message(int(value))
                     call_start_message = msg
                     call_begin_time = msg.created_at.timestamp()
@@ -572,6 +604,10 @@ async def glados_response(message: discord.Message, history, now, channel_id) ->
 # Logging events
 @client.event
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
+    if not before.guild:
+        return
+    logchannel = client.get_channel(config.get_channel(before.guild.id, 'log-chat'))
+
     if not logchannel or before.channel == logchannel:
         return
     b = format_message_with_attachments(before)
@@ -580,12 +616,21 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
 
 @client.event
 async def on_message_delete(message: discord.Message) -> None:
+    if not message.guild:
+        return
+    logchannel = client.get_channel(config.get_channel(message.guild.id, 'log-chat'))
+
     if not logchannel or message.channel == logchannel:
         return
     await logchannel.send(f"DELETE {message.channel}/{message.author}: {format_message_with_attachments(message)}")
 
 @client.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
+    if not payload.guild_id:
+        return
+    logchannel     = client.get_channel(config.get_channel(payload.guild_id, 'log-chat'))
+    datalogchannel = client.get_channel(config.get_channel(payload.guild_id, 'datalog-chat'))
+
     if not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
@@ -599,6 +644,11 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
 
 @client.event
 async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
+    if not payload.guild_id:
+        return
+    logchannel     = client.get_channel(config.get_channel(payload.guild_id, 'log-chat'))
+    datalogchannel = client.get_channel(config.get_channel(payload.guild_id, 'datalog-chat'))
+
     if not datalogchannel:
         return
     ch = client.get_channel(payload.channel_id)
