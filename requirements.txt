@@ -5,3 +5,4 @@ pyNaCL
 openai
 paramiko
 requests
+yt-dlp

@@ -13,6 +13,8 @@ import time
 from glados_db import ConfigCache, get_db_connection
 from glados_help import *
 
+from media_downloader import handle_media_links
+
 # Config from all the different servers
 config = ConfigCache(get_db_connection())
 
@@ -186,6 +188,9 @@ async def on_message(message: discord.Message) -> None:
     hist.append({"role": "user", "content": message.content})
     if len(hist) > 10:
         channel_histories[message.channel.id] = hist[-10:]
+
+    # Auto-download linked media (YouTube / Twitter / TikTok)
+    await handle_media_links(message)
 
     # Bot chat remote control
     if message.channel == remotechannel and genchat:
