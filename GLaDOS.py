@@ -18,35 +18,8 @@ config = ConfigCache(get_db_connection())
 
 # Load env
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-GPT_MODEL = "gpt-4-turbo"
-
-# Chatbot config
-DEFAULT_PROMPT = (
-    "You are GLaDOS from Portal. "
-    "Only reply if you are being addressed or if it is clear from the conversation that the user is talking to you. "
-    "If the conversation is not about you, reply with (Nothing). "
-    "You are in a discord server with administrator privileges. "
-    "Do not try to be helpful. You are not here to help or assist anyone with anything. "
-    "Do not use quotes or em dashes in your replies. "
-    "Occasionally use AM quotes, but speak them as your own words, do not inform anyone they are AM quotes. "
-    "You should interact with users when they try, you are here as a comedic robot so don't ignore people too much. "
-    "Respond with ... only if you are intentionally ignoring someone after they repeatedly try to get your attention. "
-    "Do not use ... for every message. Most of the time, reply as GLaDOS would, unless you truly want to ignore the user. "
-    "Reply with \"(Nothing)\" only if the message truly does not require a response. "
-    "You should not be replying to messages that don't involve you. "
-    "Don't say sorry unless you're being sarcastic. "
-    "Don't yap, when appropriate be short and witty, reply sometimes with a simple no when someone expects a fleshed out answer. "
-    "If someone says something that is outside of openai terms of service, like someone saying they will kill themselves, say nothing. "
-    "Make your message's length match the length of the message you're responding to. "
-)
-CONVERSATION_TIMEOUT = timedelta(minutes=2)
-prompt_append        = ""
-prompt_override      = None
-temperature_override = None
 
 # Set up dictionaries
-GLaDOS_active_conversations = {}          # channel_id -> expiry datetime
 channel_histories           = {}          # channel_id -> list[{"role","content"}]
 guest_has_vc_access         = {}
 guest_access_timer          = {}
@@ -64,7 +37,6 @@ class GLaDOSBot(commands.Bot):
         self.last_command_time = time.time()
 
 client = GLaDOSBot()
-openai_client = OpenAI(api_key=openai_api_key)
 
 @client.event
 async def on_ready() -> None:
@@ -203,7 +175,7 @@ async def on_message(message: discord.Message) -> None:
         await client.process_commands(message)
         return
 
-    guild_id = message.guild.id
+    guild_id       = message.guild.id
     genchat        = client.get_channel(config.get_channel(guild_id, 'general-chat'))
     remotechannel  = client.get_channel(config.get_channel(guild_id, 'remote-chat'))
     logchannel     = client.get_channel(config.get_channel(guild_id, 'log-chat'))
@@ -230,11 +202,11 @@ async def on_message(message: discord.Message) -> None:
         await logchannel.send(f"TEXT/ID:{message.id}/ {message.channel}/{message.author}: {format_message_with_attachments(message)}",
                                 allowed_mentions=discord.AllowedMentions.none())
 
-    # Handle chatbot conversation if applicable
-    now = datetime.now()
-    active_until = GLaDOS_active_conversations.get(message.channel.id)
-    if ("glados" in message.content.lower()) or (active_until and now < active_until):
-        await glados_response(message, channel_histories[message.channel.id], now, message.channel.id)
+    # Handle chatbot conversation if applicable (disabled for now)
+    # now = datetime.now()
+    # active_until = GLaDOS_active_conversations.get(message.channel.id)
+    # if ("glados" in message.content.lower()) or (active_until and now < active_until):
+    #     await glados_response(message, channel_histories[message.channel.id], now, message.channel.id)
 
     # IMPORTANT: needed so hybrid/prefix commands still fire
     await client.process_commands(message)
@@ -384,6 +356,8 @@ async def safe_edit_role(role, color = None, nick = None):
 @client.hybrid_command(name="scramble", description="Scramble!")
 @commands.cooldown(1, 30, commands.BucketType.guild)
 async def scramble(ctx: commands.Context):
+    await ctx.interaction.response.send_message("Scrambling Currently Disabled", ephemeral=True)
+    return
     # NOTE: unique_member_roles is never populated anywhere in this file.
     # This command will currently do nothing (loop over None/empty).
     # It needs to be sourced per-guild, e.g. a new 'scramble_roles' entry
@@ -417,6 +391,8 @@ async def scramble_error(ctx: commands.Context, error):
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def togglepausevid(ctx: commands.Context) -> None:
     print(f"Pause prompted")
+    await ctx.interaction.response.send_message("Togglepausevid Currently Disabled", ephemeral=True)
+    return
     guild_id = ctx.guild.id
     voicechannel = client.get_channel(config.get_channel(guild_id, 'main-vc'))
     pause_role   = ctx.guild.get_role(config.get_role(guild_id, 'pause'))
@@ -570,31 +546,31 @@ async def debug_command(interaction: discord.Interaction,
         print("debug error:", e)
         await interaction.followup.send("Debug failed.")
 
-async def glados_response(message: discord.Message, history, now, channel_id) -> None:
-    print("person says:", message.content)
-    prompt = prompt_override if prompt_override else DEFAULT_PROMPT
-    if prompt_append:
-        prompt += " " + prompt_append
-    temp = temperature_override if temperature_override != None else 0.3
-    messages = [{"role": "system", "content": prompt}] + history
-    try:
-        resp = openai_client.chat.completions.create(
-            model=GPT_MODEL,
-            messages=messages,
-            temperature=temp
-        )
-        output = resp.choices[0].message.content
-    except Exception as e:
-        print("OpenAI error:", e)
-        return
-    history.append({"role": "assistant", "content": output})
-    if len(history) > 10:
-        channel_histories[message.channel.id] = history[-10:]
-    if "(Nothing)" in output:
-        return
-    await message.channel.send(output)
-    print("glados:", output)
-    GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
+# async def glados_response(message: discord.Message, history, now, channel_id) -> None:
+#     print("person says:", message.content)
+#     prompt = prompt_override if prompt_override else DEFAULT_PROMPT
+#     if prompt_append:
+#         prompt += " " + prompt_append
+#     temp = temperature_override if temperature_override != None else 0.3
+#     messages = [{"role": "system", "content": prompt}] + history
+#     try:
+#         resp = openai_client.chat.completions.create(
+#             model=GPT_MODEL,
+#             messages=messages,
+#             temperature=temp
+#         )
+#         output = resp.choices[0].message.content
+#     except Exception as e:
+#         print("OpenAI error:", e)
+#         return
+#     history.append({"role": "assistant", "content": output})
+#     if len(history) > 10:
+#         channel_histories[message.channel.id] = history[-10:]
+#     if "(Nothing)" in output:
+#         return
+#     await message.channel.send(output)
+#     print("glados:", output)
+#     GLaDOS_active_conversations[channel_id] = now + CONVERSATION_TIMEOUT
 
 
 ###################################################################################################
