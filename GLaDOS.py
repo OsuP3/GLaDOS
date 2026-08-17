@@ -190,7 +190,8 @@ async def on_message(message: discord.Message) -> None:
         channel_histories[message.channel.id] = hist[-10:]
 
     # Auto-download linked media (YouTube / Twitter / TikTok)
-    await handle_media_links(message)
+    if genchat:
+        await handle_media_links(message)
 
     # Bot chat remote control
     if message.channel == remotechannel and genchat:
