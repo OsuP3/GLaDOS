@@ -1,5 +1,5 @@
 #!/bin/sh
-cd /home/osu/DiscordBot/GLaDOS/my-venv
+cd /home/osu/DiscordBot/GLaDOS/venv
 . bin/activate
 
 cd ..
